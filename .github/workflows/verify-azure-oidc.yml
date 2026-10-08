@@ -1,0 +1,24 @@
+name: Verify Azure OIDC access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Azure login (no deployment)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Verify subscription and resource group (read-only)
+        run: |
+          az account show --query '{subscription:id, tenant:tenantId}' --output json
+          az group show --name rg-cidef-prod --query '{name:name, location:location}' --output json
