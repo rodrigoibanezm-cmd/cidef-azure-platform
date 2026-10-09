@@ -54,7 +54,7 @@ jobs:
             --registry-server "$ACR.azurecr.io" \
             --registry-identity "$IDENTITY_ID" \
             --command node \
-            --args --version \
+            --args safe-placeholder.js \
             --output none
           echo "Created $TARGET with safe command node --version; no DB or Blob credentials and no executions."
           az containerapp job show -g "$RG" -n "$TARGET" --query '{name:name,trigger:properties.configuration.triggerType,image:properties.template.containers[0].image}' -o json
