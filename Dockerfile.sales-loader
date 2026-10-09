@@ -1,0 +1,7 @@
+FROM node:22-bookworm-slim
+WORKDIR /app
+COPY package.json ./
+RUN npm install --omit=dev --ignore-scripts
+COPY src/loaders/ventas-raw.js ./src/loaders/ventas-raw.js
+ENV NODE_OPTIONS="--max-old-space-size=2048"
+CMD ["node", "src/loaders/ventas-raw.js"]
