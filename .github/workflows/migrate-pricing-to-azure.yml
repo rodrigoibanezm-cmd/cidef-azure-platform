@@ -1,0 +1,71 @@
+name: Migrate pricing source tables to Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Install PostgreSQL 17 clients
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+      - name: Copy price source tables into isolated Azure schema
+        env:
+          SOURCE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          TARGET_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$SOURCE_URL" || -z "$TARGET_URL" ]]; then
+            echo "::error::Configure NEON_DATABASE_URL and AZURE_DATABASE_URL in the Production environment"
+            exit 1
+          fi
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          echo "Verifying connectivity"
+          psql "$SOURCE_URL" -X -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null
+          psql "$TARGET_URL" -X -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null
+          mkdir -p /tmp/pricing-migration
+          pg_dump "$SOURCE_URL" --format=custom --no-owner --no-acl \
+            --table=public.price_versions \
+            --table=public.price_history \
+            --table=public.price_import_staging \
+            --file=/tmp/pricing-migration/pricing.dump
+          # Isolated schema: never replace existing public tables in Azure.
+          psql "$TARGET_URL" -X -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA IF NOT EXISTS azure_price_migration'
+          # Restore into an empty isolated schema using a SQL dump with schema rewriting.
+          pg_dump "$SOURCE_URL" --format=plain --no-owner --no-acl \
+            --table=public.price_versions \
+            --table=public.price_history \
+            --table=public.price_import_staging \
+            --file=/tmp/pricing-migration/pricing.sql
+          # Fail safely if previous migration tables exist.
+          EXISTS=$(psql "$TARGET_URL" -X -Atqc "SELECT count(*) FROM information_schema.tables WHERE table_schema='azure_price_migration' AND table_name IN ('price_versions','price_history','price_import_staging')")
+          if [[ "$EXISTS" != "0" ]]; then
+            echo "::error::Validation schema already contains pricing tables. Refusing overwrite."
+            exit 1
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/pricing-migration/pricing.sql')
+          s=p.read_text()
+          # pg_dump qualified references to public are remapped to isolated schema.
+          s=s.replace('public.price_', 'azure_price_migration.price_')
+          s=s.replace('public.', 'azure_price_migration.')
+          s=s.replace('SET search_path = public, pg_catalog;', 'SET search_path = azure_price_migration, pg_catalog;')
+          p.write_text(s)
+          PY
+          psql "$TARGET_URL" -X -v ON_ERROR_STOP=1 --single-transaction -f /tmp/pricing-migration/pricing.sql >/dev/null
+          for TABLE in price_versions price_history price_import_staging; do
+            SRC=$(psql "$SOURCE_URL" -X -Atqc "SELECT count(*) FROM public.$TABLE")
+            DST=$(psql "$TARGET_URL" -X -Atqc "SELECT count(*) FROM azure_price_migration.$TABLE")
+            echo "$TABLE: Neon=$SRC Azure=$DST"
+            test "$SRC" = "$DST"
+          done
+          echo "Pricing source tables copied and row counts verified in isolated Azure schema"
