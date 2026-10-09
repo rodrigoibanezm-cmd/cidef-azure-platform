@@ -8,5 +8,10 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@azure/storage-blob": "^12.28.0",
+    "exceljs": "^4.4.0",
+    "pg": "^8.16.3"
   }
 }
