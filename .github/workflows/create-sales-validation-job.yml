@@ -1,0 +1,60 @@
+name: Create isolated Azure sales validation job
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Create manual isolated job (no data processing)
+        shell: bash
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --yes
+          RG=rg-cidef-prod
+          SOURCE=cidef-data-loader-job
+          TARGET=cidef-azure-sales-validation-job
+          ACR=cidefprodacr
+          if az containerapp job show -g "$RG" -n "$TARGET" >/dev/null 2>&1; then
+            echo "Job already exists; no changes made"
+            exit 0
+          fi
+          SOURCE_ENV=$(az containerapp job show -g "$RG" -n "$SOURCE" --query properties.environmentId -o tsv)
+          test -n "$SOURCE_ENV"
+          TAG=$(az acr repository show-tags --name "$ACR" --repository cidef-azure-sales-validation --orderby time_desc --top 1 -o tsv | head -n 1)
+          test -n "$TAG"
+          IMAGE="$ACR.azurecr.io/cidef-azure-sales-validation:$TAG"
+          # Use existing deploy identity to pull only the new image. No production job changes.
+          IDENTITY_ID=$(az identity show -g "$RG" -n id-cidef-github-deploy --query id -o tsv)
+          az containerapp job create \
+            --name "$TARGET" \
+            --resource-group "$RG" \
+            --environment "$SOURCE_ENV" \
+            --trigger-type Manual \
+            --replica-timeout 1800 \
+            --replica-retry-limit 0 \
+            --parallelism 1 \
+            --replica-completion-count 1 \
+            --cpu 0.5 \
+            --memory 3Gi \
+            --image "$IMAGE" \
+            --mi-user-assigned "$IDENTITY_ID" \
+            --registry-server "$ACR.azurecr.io" \
+            --registry-identity "$IDENTITY_ID" \
+            --command node \
+            --args --version \
+            --output none
+          echo "Created $TARGET with safe command node --version; no DB or Blob credentials and no executions."
+          az containerapp job show -g "$RG" -n "$TARGET" --query '{name:name,trigger:properties.configuration.triggerType,image:properties.template.containers[0].image}' -o json
