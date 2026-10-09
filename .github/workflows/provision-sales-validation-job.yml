@@ -1,0 +1,49 @@
+name: Provision isolated Azure sales validation job
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Create isolated job based on existing loader configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --yes
+          RG=rg-cidef-prod
+          SOURCE=cidef-data-loader-job
+          TARGET=cidef-azure-sales-validation-job
+          IMAGE="cidefprodacr.azurecr.io/cidef-azure-sales-validation:${GITHUB_SHA}"
+          # Publishing and provisioning may be separate commits; locate the most recent pushed tag.
+          IMAGE=$(az acr repository show-tags --name cidefprodacr --repository cidef-azure-sales-validation --orderby time_desc --top 1 --output tsv | head -n 1)
+          test -n "$IMAGE"
+          IMAGE="cidefprodacr.azurecr.io/cidef-azure-sales-validation:$IMAGE"
+          if az containerapp job show --name "$TARGET" --resource-group "$RG" >/dev/null 2>&1; then
+            echo "Validation job already exists; leaving it unchanged"
+            exit 0
+          fi
+          # Export configuration for reference only. Do not print secrets.
+          az containerapp job show --name "$SOURCE" --resource-group "$RG" --output json > source-job.json
+          python3 - <<'PY'
+          import json
+          x=json.load(open('source-job.json'))
+          print('Source environment:', x.get('properties',{}).get('environmentId','not available'))
+          print('Source registry configuration present:', bool(x.get('properties',{}).get('configuration',{}).get('registries')))
+          print('Source secret count:', len(x.get('properties',{}).get('configuration',{}).get('secrets') or []))
+          print('Source container count:', len(x.get('properties',{}).get('template',{}).get('containers') or []))
+          PY
+          echo "::error::Provisioning requires a separately scoped database connection and storage credentials; intentionally not cloning production job secrets or running workload."
+          exit 1
