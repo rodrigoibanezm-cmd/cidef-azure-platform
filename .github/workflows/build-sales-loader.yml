@@ -1,0 +1,23 @@
+name: Validate Azure sales loader image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/loaders/ventas-raw.js'
+      - 'Dockerfile.sales-loader'
+      - 'package.json'
+      - '.github/workflows/build-sales-loader.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build isolated image (no push or deployment)
+        run: docker build --file Dockerfile.sales-loader --tag cidef-azure-sales-loader:ci .
+      - name: Verify image entrypoint and syntax
+        run: docker run --rm --entrypoint node cidef-azure-sales-loader:ci --check src/loaders/ventas-raw.js
