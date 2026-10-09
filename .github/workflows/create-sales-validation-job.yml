@@ -47,7 +47,7 @@ jobs:
             --replica-retry-limit 0 \
             --parallelism 1 \
             --replica-completion-count 1 \
-            --cpu 0.5 \
+            --cpu 1.5 \
             --memory 3Gi \
             --image "$IMAGE" \
             --mi-user-assigned "$IDENTITY_ID" \
@@ -56,5 +56,5 @@ jobs:
             --command node \
             --args safe-placeholder.js \
             --output none
-          echo "Created $TARGET with safe command node --version; no DB or Blob credentials and no executions."
+          echo "Created $TARGET with safe placeholder command; no DB or Blob credentials and no executions."
           az containerapp job show -g "$RG" -n "$TARGET" --query '{name:name,trigger:properties.configuration.triggerType,image:properties.template.containers[0].image}' -o json
