@@ -14,7 +14,10 @@ const STORAGE_CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
 const AZURE_CONTAINER = process.env.AZURE_CONTAINER || 'cidef';
 const AZURE_SALES_PREFIX = process.env.AZURE_SALES_PREFIX || 'ventas/Estadisticas_de_Venta_por_Vista_';
 const SHEET_NAME = 'Ventas';
-const TABLE_NAME = 'ventas_raw';
+const TABLE_NAME = process.env.AZURE_SALES_TARGET_TABLE || 'ventas_raw_azure_validation';
+if (TABLE_NAME !== 'ventas_raw_azure_validation') {
+  throw new Error('Isolated loader only permits ventas_raw_azure_validation; production table is protected');
+}
 
 const ALLOWED_BRANDS = new Set(['DFLM', 'DFM', 'FOTON', 'ZNA', 'ZNA DONGFENG']);
 const COMMERCIAL_CUSTOMER_CATEGORIES = new Set(['Cliente General', 'Concesionaria']);
@@ -294,7 +297,7 @@ async function main() {
         count(DISTINCT upper(btrim(nro_vin_chasis)))::int AS distinct_vins,
         count(*) FILTER (WHERE categoria_cliente = 'Cliente General')::int AS cliente_general,
         count(*) FILTER (WHERE categoria_cliente = 'Concesionaria')::int AS concesionaria
-      FROM ventas_raw
+      FROM ${quoteIdent(TABLE_NAME)}
     `);
 
     console.log(JSON.stringify({
