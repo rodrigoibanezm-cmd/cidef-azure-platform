@@ -2,6 +2,9 @@ name: Audit pricing dependencies in Azure
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/audit-pricing-dependencies.yml'
 
 permissions:
   contents: read
