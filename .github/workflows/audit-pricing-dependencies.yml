@@ -14,11 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: Production
     steps:
-      - name: Install PostgreSQL 17 clients
+      - name: Install PostgreSQL client
         run: |
-          sudo install -d /usr/share/postgresql-common/pgdg
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-17
+          sudo apt-get install -y -qq postgresql-client
 
       - name: Audit required pricing tables
         env:
@@ -31,8 +30,6 @@ jobs:
             echo "::error::AZURE_DATABASE_URL is not configured in Production"
             exit 1
           fi
-
-          export PATH="/usr/lib/postgresql/17/bin:$PATH"
 
           psql "$TARGET_URL" -X -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null
 
