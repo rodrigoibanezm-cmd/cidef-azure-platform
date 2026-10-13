@@ -1,0 +1,103 @@
+name: Audit pricing dependencies in Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Install PostgreSQL 17 clients
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Audit required pricing tables
+        env:
+          TARGET_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TARGET_URL:-}" ]]; then
+            echo "::error::AZURE_DATABASE_URL is not configured in Production"
+            exit 1
+          fi
+
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+
+          psql "$TARGET_URL" -X -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null
+
+          TABLES=(
+            price_episode_canonico_v01
+            versiones_master_v01
+            modelos_master_v01
+            marcas_master_v01
+            producto_aliases_v01
+            vehiculo_canonico
+            ventas_raw
+            notas_credito_raw
+          )
+
+          echo "=== PRICING DEPENDENCY AUDIT ==="
+          echo "database: $(psql "$TARGET_URL" -X -Atqc 'SELECT current_database()')"
+          echo
+
+          missing=0
+
+          for table in "${TABLES[@]}"; do
+            echo "## $table"
+            rows=$(psql "$TARGET_URL" -X -Atqc "
+              SELECT table_schema || '|' || table_type
+              FROM information_schema.tables
+              WHERE table_name = '$table'
+              ORDER BY CASE WHEN table_schema='public' THEN 0 ELSE 1 END, table_schema
+              LIMIT 1
+            ")
+
+            if [[ -z "$rows" ]]; then
+              echo "status=MISSING"
+              missing=$((missing+1))
+              echo
+              continue
+            fi
+
+            schema=$(echo "$rows" | cut -d'|' -f1)
+            type=$(echo "$rows" | cut -d'|' -f2)
+
+            count=$(psql "$TARGET_URL" -X -Atqc "SELECT count(*) FROM \"$schema\".\"$table\"")
+
+            echo "status=FOUND"
+            echo "schema=$schema"
+            echo "type=$type"
+            echo "rows=$count"
+
+            if [[ "$table" = "price_episode_canonico_v01" ]]; then
+              psql "$TARGET_URL" -X -Atqc "
+                SELECT 'min_vigencia_desde=' || COALESCE(min(vigencia_desde)::text,'NULL')
+                FROM \"$schema\".\"$table\";
+                SELECT 'max_vigencia_desde=' || COALESCE(max(vigencia_desde)::text,'NULL')
+                FROM \"$schema\".\"$table\";
+              "
+            fi
+
+            if [[ "$table" = "ventas_raw" ]]; then
+              psql "$TARGET_URL" -X -Atqc "
+                SELECT 'min_fecha_factura=' || COALESCE(min(fecha_factura),'NULL')
+                FROM \"$schema\".\"$table\";
+                SELECT 'max_fecha_factura=' || COALESCE(max(fecha_factura),'NULL')
+                FROM \"$schema\".\"$table\";
+              "
+            fi
+
+            echo
+          done
+
+          echo "=== SUMMARY ==="
+          echo "missing_tables=$missing"
+          echo "Audit is read-only; no schema or data changes were performed."
