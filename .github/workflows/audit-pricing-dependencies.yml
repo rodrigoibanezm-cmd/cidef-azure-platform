@@ -8,64 +8,28 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     environment: Production
     steps:
-      - name: Azure login via OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client
 
-      - name: Resolve Azure PostgreSQL connection without exposing secrets
-        id: db
-        shell: bash
-        run: |
-          set -euo pipefail
-          RG=rg-cidef-prod
-          JOB=cidef-data-loader-job
-
-          # Find which Container Apps Job secret is referenced by AZURE_DATABASE_URL.
-          SECRET_REF=$(az containerapp job show             --resource-group "$RG"             --name "$JOB"             --query "properties.template.containers[0].env[?name=='AZURE_DATABASE_URL'].secretRef | [0]"             -o tsv)
-
-          if [[ -z "$SECRET_REF" ]]; then
-            echo "::error::Existing $JOB does not expose an AZURE_DATABASE_URL secretRef"
-            exit 1
-          fi
-
-          # Read secret value only into the process environment. Never print it.
-          TARGET_URL=$(az containerapp job secret list             --resource-group "$RG"             --name "$JOB"             --query "[?name=='$SECRET_REF'].value | [0]"             -o tsv)
-
-          if [[ -z "$TARGET_URL" ]]; then
-            echo "::error::Could not resolve the referenced Azure DB secret from $JOB"
-            exit 1
-          fi
-
-          echo "::add-mask::$TARGET_URL"
-
-          # Persist masked value only for subsequent steps in this job.
-          {
-            echo 'TARGET_URL<<EOF'
-            echo "$TARGET_URL"
-            echo 'EOF'
-          } >> "$GITHUB_ENV"
-
-          echo "Resolved Azure PostgreSQL connection from existing job secret reference."
-
       - name: Audit required pricing tables
+        env:
+          TARGET_URL: ${{ secrets.AZURE_DATABASE_URL }}
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ -z "${TARGET_URL:-}" ]]; then
+            echo "::error::AZURE_DATABASE_URL is not configured in Production"
+            exit 1
+          fi
 
           psql "$TARGET_URL" -X -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null
 
