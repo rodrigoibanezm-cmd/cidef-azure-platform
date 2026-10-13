@@ -8,13 +8,15 @@ on:
       - '.github/workflows/audit-pricing-dependencies.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   audit:
     runs-on: ubuntu-latest
     environment: Production
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update -qq
@@ -49,6 +51,10 @@ jobs:
             ventas_raw
             notas_credito_raw
           )
+
+          REPORT="audit/azure-pricing-dependencies.txt"
+          mkdir -p audit
+          exec > >(tee "$REPORT") 2>&1
 
           echo "=== PRICING DEPENDENCY AUDIT ==="
           echo "database=$(psql "$TARGET_URL" -X -Atqc 'SELECT current_database()')"
@@ -102,3 +108,18 @@ jobs:
           echo "=== SUMMARY ==="
           echo "missing_tables=$missing"
           echo "Audit is read-only; no schema or data changes were performed."
+
+
+      - name: Persist audit report
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add audit/azure-pricing-dependencies.txt
+          if git diff --cached --quiet; then
+            echo "Audit report unchanged."
+            exit 0
+          fi
+          git commit -m "audit: record Azure pricing dependencies"
+          git push
