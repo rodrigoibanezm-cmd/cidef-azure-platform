@@ -31,6 +31,11 @@ jobs:
             exit 1
           fi
 
+          if [[ "$TARGET_URL" != postgresql://* && "$TARGET_URL" != postgres://* ]]; then
+            echo "::error::AZURE_DATABASE_URL must be a full PostgreSQL URI (postgresql://user:password@host:5432/database?sslmode=require)"
+            exit 1
+          fi
+
           psql "$TARGET_URL" -X -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null
 
           TABLES=(
