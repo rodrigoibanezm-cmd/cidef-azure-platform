@@ -1,0 +1,35 @@
+=== PRICING DEPENDENCY AUDIT ===
+database=postgres
+
+## price_episode_canonico_v01
+status=MISSING
+
+## versiones_master_v01
+status=MISSING
+
+## modelos_master_v01
+status=MISSING
+
+## marcas_master_v01
+status=MISSING
+
+## producto_aliases_v01
+status=MISSING
+
+## vehiculo_canonico
+status=MISSING
+
+## ventas_raw
+status=FOUND
+schema=public
+type=BASE TABLE
+rows=46185
+min_fecha_factura=2020-05-31
+max_fecha_factura=2026-10-07
+
+## notas_credito_raw
+status=MISSING
+
+=== SUMMARY ===
+missing_tables=7
+Audit is read-only; no schema or data changes were performed.
