@@ -55,9 +55,7 @@ jobs:
           ACR=cidefprodacr.azurecr.io
           az extension add --name containerapp --upgrade --yes
           IDENTITY_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query id -o tsv)
-          ENVIRONMENT_ID=$(az containerapp job show --resource-group "$RG" --name cidef-data-loader-job --query properties.environmentId -o tsv)
           test -n "$IDENTITY_ID"
-          test -n "$ENVIRONMENT_ID"
 
           ACR_ID=$(az acr show --name cidefprodacr --resource-group "$RG" --query id -o tsv)
           PRINCIPAL_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query principalId -o tsv)
@@ -79,27 +77,6 @@ jobs:
             exit 1
           fi
           echo "Verified existing AcrPull assignment for id-cidef-azure-pg-mcp"
-
-          if az containerapp show --resource-group "$RG" --name "$APP" >/dev/null 2>&1; then
-            az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --user-assigned "$IDENTITY_ID" --output none
-          else
-            az containerapp create \
-              --resource-group "$RG" \
-              --name "$APP" \
-              --environment "$ENVIRONMENT_ID" \
-              --image "$IMAGE" \
-              --ingress external \
-              --target-port 3000 \
-              --user-assigned "$IDENTITY_ID" \
-              --registry-server "$ACR" \
-              --registry-identity "$IDENTITY_ID" \
-              --cpu 0.5 \
-              --memory 1Gi \
-              --min-replicas 1 \
-              --max-replicas 2 \
-              --env-vars "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
-              --output none
-          fi
 
           APP_JSON=$(mktemp)
           PATCH_JSON=$(mktemp)
@@ -133,6 +110,7 @@ jobs:
             --body "@$PATCH_JSON" \
             --output none
           rm -f "$APP_JSON" "$PATCH_JSON"
+          az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --output none
           az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
           FQDN=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           az containerapp update \
