@@ -1,0 +1,43 @@
+name: Test ACR build without AcrPush
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-acr-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  acr-build:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Build and publish test image with ACR Tasks
+        shell: bash
+        run: |
+          set -euo pipefail
+          context="$(mktemp -d)"
+          trap 'rm -rf "$context"' EXIT
+          cat > "$context/Dockerfile" <<'EOF'
+          FROM alpine:3.20
+          CMD ["sh", "-c", "echo ACR build permission check"]
+          EOF
+          image="mcp-acr-build-check:${GITHUB_RUN_ID}"
+          az acr build --registry cidefprodacr --image "$image" "$context"
+          echo "ACR_BUILD_IMAGE=cidefprodacr.azurecr.io/$image" >> "$GITHUB_STEP_SUMMARY"
+      - name: Inspect reusable Container Apps resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          az containerapp env list --resource-group rg-cidef-prod --query '[].{name:name, location:location}' --output table
+          az monitor log-analytics workspace list --resource-group rg-cidef-prod --query '[].{name:name, customerId:customerId}' --output table
