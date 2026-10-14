@@ -1,0 +1,115 @@
+name: Deploy PostgreSQL MCP to Azure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mcp/**'
+      - 'Dockerfile.pg-mcp'
+      - '.github/workflows/deploy-pg-mcp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push MCP image
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name cidefprodacr
+          IMAGE="cidefprodacr.azurecr.io/cidef-postgres-mcp:${GITHUB_SHA}"
+          docker build --file Dockerfile.pg-mcp --tag "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy to existing Container Apps environment
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+          MCP_CLIENT_ID: 71a36bc5-b850-43bf-be67-e28568ef0d58
+          MCP_TENANT_ID: 1a38830c-0239-4e97-9b1d-bededd560934
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::AZURE_DATABASE_URL is not configured in the Production environment"
+            exit 1
+          fi
+
+          RG=rg-cidef-prod
+          APP=cidef-pg-mcp
+          ACR=cidefprodacr.azurecr.io
+          az extension add --name containerapp --upgrade --yes
+          IDENTITY_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query id -o tsv)
+          ENVIRONMENT_ID=$(az containerapp job show --resource-group "$RG" --name cidef-data-loader-job --query properties.environmentId -o tsv)
+          test -n "$IDENTITY_ID"
+          test -n "$ENVIRONMENT_ID"
+
+          if az containerapp show --resource-group "$RG" --name "$APP" >/dev/null 2>&1; then
+            az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --user-assigned "$IDENTITY_ID" --output none
+          else
+            az containerapp create \
+              --resource-group "$RG" \
+              --name "$APP" \
+              --environment "$ENVIRONMENT_ID" \
+              --image "$IMAGE" \
+              --ingress external \
+              --target-port 3000 \
+              --user-assigned "$IDENTITY_ID" \
+              --registry-server "$ACR" \
+              --registry-identity "$IDENTITY_ID" \
+              --cpu 0.5 \
+              --memory 1Gi \
+              --min-replicas 1 \
+              --max-replicas 2 \
+              --env-vars "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
+              --output none
+          fi
+
+          az containerapp registry set --resource-group "$RG" --name "$APP" --server "$ACR" --identity "$IDENTITY_ID" --output none
+          az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
+          FQDN=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+          az containerapp update \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --set-env-vars "DATABASE_URL=secretref:database-url" "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" "MCP_PUBLIC_URL=https://$FQDN" \
+            --output none
+
+          az containerapp auth update \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --unauthenticated-client-action AllowAnonymous \
+            --excluded-paths /healthz /readyz /.well-known/oauth-protected-resource /mcp/.well-known/oauth-protected-resource \
+            --output none
+
+          echo "MCP URL: https://$FQDN/mcp" >> "$GITHUB_STEP_SUMMARY"
+          az containerapp show --resource-group "$RG" --name "$APP" --query '{name:name, fqdn:properties.configuration.ingress.fqdn, provisioningState:properties.provisioningState, image:properties.template.containers[0].image}' --output json
+      - name: Verify MCP readiness and database connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          FQDN=$(az containerapp show --resource-group rg-cidef-prod --name cidef-pg-mcp --query properties.configuration.ingress.fqdn -o tsv)
+          for attempt in {1..24}; do
+            if curl --fail --silent "https://$FQDN/readyz"; then
+              echo
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::MCP did not become ready or could not connect to Azure PostgreSQL"
+          az containerapp logs show --resource-group rg-cidef-prod --name cidef-pg-mcp --tail 100 || true
+          exit 1
