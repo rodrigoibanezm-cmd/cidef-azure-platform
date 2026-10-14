@@ -96,6 +96,10 @@ jobs:
           identity = {"type": identity["type"], "userAssignedIdentities": identities}
 
           configuration = app.get("properties", {}).get("configuration") or {}
+          # The CLI response contains a convenience field not accepted by the ARM API.
+          ingress = configuration.get("ingress")
+          if ingress:
+              ingress.pop("targetPortHttpScheme", None)
           registries = configuration.get("registries") or []
           registries = [item for item in registries if item.get("server", "").lower() != acr_server.lower()]
           registries.append({"server": acr_server, "identity": identity_id})
