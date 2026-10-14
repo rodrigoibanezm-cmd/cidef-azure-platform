@@ -59,6 +59,27 @@ jobs:
           test -n "$IDENTITY_ID"
           test -n "$ENVIRONMENT_ID"
 
+          ACR_ID=$(az acr show --name cidefprodacr --resource-group "$RG" --query id -o tsv)
+          PRINCIPAL_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query principalId -o tsv)
+          test -n "$PRINCIPAL_ID"
+          test -n "$ACR_ID"
+
+          if ! az containerapp show --resource-group "$RG" --name "$APP" --output none 2>/dev/null; then
+            echo "::error::Existing Container App $APP was not found; workflow will not create infrastructure"
+            exit 1
+          fi
+
+          ACR_PULL_COUNT=$(az role assignment list \
+            --assignee-object-id "$PRINCIPAL_ID" \
+            --scope "$ACR_ID" \
+            --query "[?roleDefinitionName=='AcrPull'] | length(@)" \
+            --output tsv)
+          if ! [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Existing AcrPull assignment was not found for id-cidef-azure-pg-mcp at $ACR_ID; no role assignment was attempted"
+            exit 1
+          fi
+          echo "Verified existing AcrPull assignment for id-cidef-azure-pg-mcp"
+
           if az containerapp show --resource-group "$RG" --name "$APP" >/dev/null 2>&1; then
             az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --user-assigned "$IDENTITY_ID" --output none
           else
@@ -80,7 +101,38 @@ jobs:
               --output none
           fi
 
-          az containerapp registry set --resource-group "$RG" --name "$APP" --server "$ACR" --identity "$IDENTITY_ID" --output none
+          APP_JSON=$(mktemp)
+          PATCH_JSON=$(mktemp)
+          az containerapp show --resource-group "$RG" --name "$APP" --output json > "$APP_JSON"
+          python3 - "$APP_JSON" "$PATCH_JSON" "$IDENTITY_ID" "$ACR" <<'PY'
+          import json
+          import sys
+
+          source, target, identity_id, acr_server = sys.argv[1:]
+          with open(source, encoding="utf-8") as f:
+              app = json.load(f)
+          identity = app.get("identity") or {}
+          identities = identity.get("userAssignedIdentities") or {}
+          identities[identity_id] = {}
+          identity_type = identity.get("type", "")
+          identity["type"] = "SystemAssigned, UserAssigned" if "SystemAssigned" in identity_type else "UserAssigned"
+          identity = {"type": identity["type"], "userAssignedIdentities": identities}
+
+          configuration = app.get("properties", {}).get("configuration") or {}
+          registries = configuration.get("registries") or []
+          registries = [item for item in registries if item.get("server", "").lower() != acr_server.lower()]
+          registries.append({"server": acr_server, "identity": identity_id})
+          configuration["registries"] = registries
+
+          with open(target, "w", encoding="utf-8") as f:
+              json.dump({"identity": identity, "properties": {"configuration": configuration}}, f)
+          PY
+          APP_RESOURCE_ID=$(az containerapp show --resource-group "$RG" --name "$APP" --query id -o tsv)
+          az rest --method patch \
+            --uri "https://management.azure.com${APP_RESOURCE_ID}?api-version=2024-03-01" \
+            --body "@$PATCH_JSON" \
+            --output none
+          rm -f "$APP_JSON" "$PATCH_JSON"
           az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
           FQDN=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           az containerapp update \
@@ -89,27 +141,45 @@ jobs:
             --set-env-vars "DATABASE_URL=secretref:database-url" "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" "MCP_PUBLIC_URL=https://$FQDN" \
             --output none
 
+          # The MCP service validates Entra bearer tokens and scopes/roles on /mcp.
+          # Keep platform auth disabled so it does not intercept OAuth discovery or readiness routes.
           az containerapp auth update \
             --resource-group "$RG" \
             --name "$APP" \
+            --enabled false \
             --unauthenticated-client-action AllowAnonymous \
-            --excluded-paths /healthz /readyz /.well-known/oauth-protected-resource /mcp/.well-known/oauth-protected-resource \
             --output none
 
           echo "MCP URL: https://$FQDN/mcp" >> "$GITHUB_STEP_SUMMARY"
           az containerapp show --resource-group "$RG" --name "$APP" --query '{name:name, fqdn:properties.configuration.ingress.fqdn, provisioningState:properties.provisioningState, image:properties.template.containers[0].image}' --output json
-      - name: Verify MCP readiness and database connectivity
+      - name: Verify MCP endpoint and database connectivity
         shell: bash
         run: |
           set -euo pipefail
           FQDN=$(az containerapp show --resource-group rg-cidef-prod --name cidef-pg-mcp --query properties.configuration.ingress.fqdn -o tsv)
+          READY=""
           for attempt in {1..24}; do
-            if curl --fail --silent "https://$FQDN/readyz"; then
-              echo
-              exit 0
+            READY=$(curl --fail --silent "https://$FQDN/readyz" || true)
+            if [[ "$READY" == *'"database":"connected"'* ]]; then
+              echo "PostgreSQL readiness check (SELECT 1): $READY"
+              break
             fi
             sleep 5
           done
-          echo "::error::MCP did not become ready or could not connect to Azure PostgreSQL"
-          az containerapp logs show --resource-group rg-cidef-prod --name cidef-pg-mcp --tail 100 || true
-          exit 1
+          if [[ "$READY" != *'"database":"connected"'* ]]; then
+            echo "::error::MCP did not become ready or could not connect to Azure PostgreSQL"
+            az containerapp logs show --resource-group rg-cidef-prod --name cidef-pg-mcp --tail 100 || true
+            exit 1
+          fi
+
+          METADATA=$(curl --fail --silent "https://$FQDN/.well-known/oauth-protected-resource")
+          [[ "$METADATA" == *'"authorization_servers"'* ]] || { echo "::error::OAuth protected-resource metadata is missing"; exit 1; }
+
+          MCP_STATUS=$(curl --silent --output /tmp/mcp-unauthenticated.json --write-out '%{http_code}' "https://$FQDN/mcp")
+          if [[ "$MCP_STATUS" != "401" ]]; then
+            echo "::error::Unauthenticated /mcp request returned HTTP $MCP_STATUS (expected 401)"
+            cat /tmp/mcp-unauthenticated.json
+            exit 1
+          fi
+          echo "OAuth metadata is available; unauthenticated /mcp is correctly rejected with HTTP 401"
+          echo "PostgreSQL SELECT 1 succeeded and /mcp enforces bearer authentication" >> "$GITHUB_STEP_SUMMARY"
