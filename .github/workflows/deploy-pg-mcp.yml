@@ -95,7 +95,15 @@ jobs:
           identity["type"] = "SystemAssigned, UserAssigned" if "SystemAssigned" in identity_type else "UserAssigned"
           identity = {"type": identity["type"], "userAssignedIdentities": identities}
 
-          configuration = app.get("properties", {}).get("configuration") or {}
+          source_configuration = app.get("properties", {}).get("configuration") or {}
+          allowed_configuration = {
+              "activeRevisionsMode", "dapr", "identitySettings", "ingress",
+              "maxInactiveRevisions", "registries", "runtime", "secrets", "service"
+          }
+          configuration = {
+              key: value for key, value in source_configuration.items()
+              if key in allowed_configuration
+          }
           # The CLI response contains a convenience field not accepted by the ARM API.
           ingress = configuration.get("ingress")
           if ingress:
@@ -110,7 +118,7 @@ jobs:
           PY
           APP_RESOURCE_ID=$(az containerapp show --resource-group "$RG" --name "$APP" --query id -o tsv)
           az rest --method patch \
-            --uri "https://management.azure.com${APP_RESOURCE_ID}?api-version=2024-03-01" \
+            --uri "https://management.azure.com${APP_RESOURCE_ID}?api-version=2025-07-01" \
             --body "@$PATCH_JSON" \
             --output none
           rm -f "$APP_JSON" "$PATCH_JSON"
