@@ -78,6 +78,22 @@ jobs:
           fi
           echo "Verified existing AcrPull assignment for id-cidef-azure-pg-mcp"
 
+          wait_for_app() {
+            for attempt in {1..36}; do
+              STATE=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.provisioningState --output tsv)
+              if [[ "$STATE" == "Succeeded" ]]; then
+                return 0
+              fi
+              if [[ "$STATE" == "Failed" ]]; then
+                echo "::error::Container App provisioning state is Failed"
+                return 1
+              fi
+              sleep 5
+            done
+            echo "::error::Container App provisioning did not finish within 180 seconds (state: $STATE)"
+            return 1
+          }
+
           APP_JSON=$(mktemp)
           PATCH_JSON=$(mktemp)
           az containerapp show --resource-group "$RG" --name "$APP" --output json > "$APP_JSON"
@@ -121,15 +137,19 @@ jobs:
             --uri "https://management.azure.com${APP_RESOURCE_ID}?api-version=2025-07-01" \
             --body "@$PATCH_JSON" \
             --output none
+          wait_for_app
           rm -f "$APP_JSON" "$PATCH_JSON"
           az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --output none
+          wait_for_app
           az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
+          wait_for_app
           FQDN=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           az containerapp update \
             --resource-group "$RG" \
             --name "$APP" \
             --set-env-vars "DATABASE_URL=secretref:database-url" "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" "MCP_PUBLIC_URL=https://$FQDN" \
             --output none
+          wait_for_app
 
           # The MCP service validates Entra bearer tokens and scopes/roles on /mcp.
           # Keep platform auth disabled so it does not intercept OAuth discovery or readiness routes.
@@ -139,6 +159,7 @@ jobs:
             --enabled false \
             --unauthenticated-client-action AllowAnonymous \
             --output none
+          wait_for_app
 
           echo "MCP URL: https://$FQDN/mcp" >> "$GITHUB_STEP_SUMMARY"
           az containerapp show --resource-group "$RG" --name "$APP" --query '{name:name, fqdn:properties.configuration.ingress.fqdn, provisioningState:properties.provisioningState, image:properties.template.containers[0].image}' --output json
