@@ -98,7 +98,7 @@ jobs:
           source_configuration = app.get("properties", {}).get("configuration") or {}
           allowed_configuration = {
               "activeRevisionsMode", "dapr", "identitySettings", "ingress",
-              "maxInactiveRevisions", "registries", "runtime", "secrets", "service"
+              "maxInactiveRevisions", "registries", "runtime", "service"
           }
           configuration = {
               key: value for key, value in source_configuration.items()
