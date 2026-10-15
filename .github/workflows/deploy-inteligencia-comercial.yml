@@ -49,13 +49,13 @@ jobs:
           RG="rg-cidef-prod"
           APP="cidef-inteligencia-comercial"
           ENV="cidef-prod-env"
-          IDENTITY_NAME="id-cidef-github-deploy"
+          IDENTITY_NAME="id-cidef-azure-pg-mcp"
           IDENTITY_ID=$(az identity show -g "$RG" -n "$IDENTITY_NAME" --query id -o tsv)
           PRINCIPAL_ID=$(az identity show -g "$RG" -n "$IDENTITY_NAME" --query principalId -o tsv)
           ACR_ID=$(az acr show -g "$RG" -n cidefprodacr --query id -o tsv)
-          ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv)
+          ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --include-inherited --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv)
           if ! [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::Existing identity $IDENTITY_NAME has no verified AcrPull on cidefprodacr. No permissions changed."
+            echo "::error::Existing image-pull identity $IDENTITY_NAME has no verified AcrPull on cidefprodacr (including inherited assignments). No permissions changed."
             exit 1
           fi
 
