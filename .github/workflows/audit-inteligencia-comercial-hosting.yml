@@ -1,0 +1,62 @@
+name: Audit Azure hosting for CIDEF Inteligencia Comercial
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Azure login via existing OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read-only Azure hosting inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG=rg-cidef-prod
+          {
+            echo "# CIDEF hosting audit"
+            echo ""
+            echo "Resource group: \`$RG\`"
+            echo ""
+            echo "## Resource types and names"
+            az resource list -g "$RG" --query "[].{name:name,type:type,location:location}" -o table
+            echo ""
+            echo "## Existing App Service plans"
+            az appservice plan list -g "$RG" --query "[].{name:name,sku:sku.name,kind:kind,location:location}" -o table
+            echo ""
+            echo "## Existing Web Apps"
+            az webapp list -g "$RG" --query "[].{name:name,state:state,host:defaultHostName,kind:kind,plan:serverFarmId}" -o table
+            echo ""
+            echo "## Existing Container Apps environments"
+            az containerapp env list -g "$RG" --query "[].{name:name,location:location,id:id}" -o table
+            echo ""
+            echo "## Existing Container Apps"
+            az containerapp list -g "$RG" --query "[].{name:name,provisioningState:properties.provisioningState,host:properties.configuration.ingress.fqdn,environment:properties.managedEnvironmentId}" -o table
+            echo ""
+            echo "## Azure PostgreSQL servers"
+            az postgres flexible-server list -g "$RG" --query "[].{name:name,state:state,version:version,location:location}" -o table
+          } | tee azure-hosting-audit.txt
+          {
+            echo '## Azure hosting inventory'
+            echo 'Read-only inventory for migration of cidef-inteligencia-comercial.'
+            echo 'See uploaded audit artifact for the complete resource table.'
+            echo 'No resources or permissions were created or changed.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload inventory artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-hosting-audit
+          path: azure-hosting-audit.txt
+          retention-days: 7
