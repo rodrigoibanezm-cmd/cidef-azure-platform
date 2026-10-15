@@ -1,0 +1,89 @@
+name: Deploy Inteligencia Comercial to Azure
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-inteligencia-comercial.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Azure login using existing OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Checkout public frontend repository
+        uses: actions/checkout@v4
+        with:
+          repository: rodrigoibanezm-cmd/cidef-inteligencia-comercial
+          ref: main
+          path: frontend
+          persist-credentials: false
+
+      - name: Build and push frontend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="cidefprodacr.azurecr.io/cidef-inteligencia-comercial:${GITHUB_SHA}"
+          az acr login --name cidefprodacr
+          docker build -f frontend/Dockerfile -t "$IMAGE" frontend
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy frontend to existing Azure Container Apps environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --yes
+          RG="rg-cidef-prod"
+          APP="cidef-inteligencia-comercial"
+          ENV="cidef-prod-env"
+          IDENTITY_NAME="id-cidef-github-deploy"
+          IDENTITY_ID=$(az identity show -g "$RG" -n "$IDENTITY_NAME" --query id -o tsv)
+          PRINCIPAL_ID=$(az identity show -g "$RG" -n "$IDENTITY_NAME" --query principalId -o tsv)
+          ACR_ID=$(az acr show -g "$RG" -n cidefprodacr --query id -o tsv)
+          ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv)
+          if ! [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Existing identity $IDENTITY_NAME has no verified AcrPull on cidefprodacr. No permissions changed."
+            exit 1
+          fi
+
+          if az containerapp show -g "$RG" -n "$APP" --output none 2>/dev/null; then
+            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --output none
+          else
+            az containerapp create \
+              -g "$RG" -n "$APP" \
+              --environment "$ENV" \
+              --image "$IMAGE" \
+              --user-assigned "$IDENTITY_ID" \
+              --registry-server cidefprodacr.azurecr.io \
+              --registry-identity "$IDENTITY_ID" \
+              --ingress external --target-port 3000 \
+              --min-replicas 0 --max-replicas 1 \
+              --cpu 0.5 --memory 1Gi \
+              --output none
+          fi
+          FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+          test -n "$FQDN"
+          echo "FRONT_URL=https://$FQDN" >> "$GITHUB_ENV"
+          echo "Front URL: https://$FQDN" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --location --retry 8 --retry-delay 5 --retry-connrefused "$FRONT_URL/" --output /dev/null
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/cierre-mensual" --output /dev/null
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/como-vamos" --output /dev/null
+          echo "Three frontend routes respond successfully." >> "$GITHUB_STEP_SUMMARY"
