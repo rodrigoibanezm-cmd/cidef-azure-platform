@@ -102,7 +102,11 @@ try {
     assert.match(item.snapshot_date, /^\d{4}-\d{2}-\d{2}$/);
     assert.ok(SOURCE_COLUMNS[item.source_type], `Invalid source type: ${item.source_type}`);
     const filename = path.basename(item.file);
-    assert.match(filename, /^((Cotizacion_Cidef)|(Precurse_Cidef)|(Curse_Cidef))_\d{8}\.csv$/);
+    const filenameMatch = filename.match(/^((Cotizacion_Cidef)|(Precurse_Cidef)|(Curse_Cidef))_(\d{4})(\d{2})(\d{2})\.csv$/);
+    assert.ok(filenameMatch, `Invalid FORUM snapshot filename: ${filename}`);
+    const receivedFileDate = `${filenameMatch[4]}-${filenameMatch[5]}-${filenameMatch[6]}`;
+    assert.equal(item.snapshot_date, receivedFileDate, `snapshot_date must match the file receipt date in ${filename}`);
+    const operationDateField = { COTIZACION: 'fecha_cotizacion', PRECURSE: 'fecha_precurse', CURSE: 'fecha_curse' }[item.source_type];
     const rows = parseCsv(await readFile(item.file), item.source_type);
     const client = await pool.connect();
     let existing; let beforeCount; let afterCount;
@@ -123,12 +127,12 @@ try {
       afterCount = actualOperations.size;
       assert.equal(afterCount, sourceOperations.size, `Snapshot row count differs from source for ${item.snapshot_date} ${item.source_type}`);
       await client.query('COMMIT');
-      certified.push({ snapshot_date: item.snapshot_date, source_type: item.source_type, source_rows: rows.length, rows_before: beforeCount, inserted_rows: missingRows.length, inserted_operations: missingRows.map(row => row.numero_operacion), rows_after: afterCount, blob_name: item.blob_name });
+      certified.push({ snapshot_date: item.snapshot_date, received_file_date: receivedFileDate, operation_date_field: operationDateField, source_type: item.source_type, source_rows: rows.length, rows_before: beforeCount, inserted_rows: missingRows.length, inserted_operations: missingRows.map(row => row.numero_operacion), rows_after: afterCount, blob_name: item.blob_name });
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
     } finally { client.release(); }
     assert.equal(afterCount, rows.length, `Snapshot operation certification failed for ${item.snapshot_date} ${item.source_type}`);
   }
-  console.log(JSON.stringify({ status: 'COMPARED_AND_RECOVERED_FROM_AZURE_BLOB_MIRROR', files: certified, recovered_rows: certified.reduce((sum, file) => sum + file.inserted_rows, 0) }));
+  console.log(JSON.stringify({ status: 'COMPARED_AND_RECOVERED_FROM_AZURE_BLOB_MIRROR', date_semantics: 'snapshot_date/received_file_date comes from the file date; operation_date_field is parsed from the CSV business event date and is preserved separately', files: certified, recovered_rows: certified.reduce((sum, file) => sum + file.inserted_rows, 0) }));
 } finally { await closeAzurePool(); }
