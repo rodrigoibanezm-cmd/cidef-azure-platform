@@ -10,6 +10,8 @@ COPY scripts/verify-rvm-p1.js ./scripts/verify-rvm-p1.js
 COPY scripts/verify-crm-p1.js ./scripts/verify-crm-p1.js
 COPY scripts/verify-forum-p1.js ./scripts/verify-forum-p1.js
 COPY scripts/install-forum-universe-view.js ./scripts/install-forum-universe-view.js
+COPY scripts/forum-raw-inventory.js ./scripts/forum-raw-inventory.js
+COPY scripts/recover-forum-snapshots-azure.js ./scripts/recover-forum-snapshots-azure.js
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]

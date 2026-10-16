@@ -11,6 +11,8 @@ on:
       - 'scripts/verify-crm-p1.js'
       - 'scripts/verify-forum-p1.js'
       - 'scripts/install-forum-universe-view.js'
+      - 'scripts/forum-raw-inventory.js'
+      - 'scripts/recover-forum-snapshots-azure.js'
       - 'Dockerfile.pg-mcp'
       - '.github/workflows/deploy-pg-mcp.yml'
   workflow_dispatch:
@@ -42,6 +44,82 @@ jobs:
           docker build --file Dockerfile.pg-mcp --tag "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Recover missing FORUM snapshots from the R2 mirror in Azure Blob
+        id: forum_recovery
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK_DIR=$(mktemp -d)
+          mkdir -p "$WORK_DIR/files"
+          az storage blob list \
+            --account-name cidefprodstorage \
+            --container-name cidef \
+            --auth-mode login \
+            --prefix Forum/ \
+            --output json > "$WORK_DIR/blob-list.json"
+          docker run --rm \
+            --entrypoint node \
+            -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
+            "$IMAGE" scripts/forum-raw-inventory.js > "$WORK_DIR/azure-raw.json"
+          python3 - "$WORK_DIR/blob-list.json" "$WORK_DIR/azure-raw.json" "$WORK_DIR/manifest.json" "$WORK_DIR/manifest.tsv" <<'PY'
+          import json
+          import re
+          import sys
+
+          blob_path, raw_path, manifest_path, tsv_path = sys.argv[1:]
+          blobs = json.load(open(blob_path, encoding="utf-8"))
+          raw = json.load(open(raw_path, encoding="utf-8"))
+          patterns = {
+              "COTIZACION": re.compile(r"^Forum/Cotizacion_Cidef_(\d{4})(\d{2})(\d{2})\.csv$"),
+              "PRECURSE": re.compile(r"^Forum/Precurse_Cidef_(\d{4})(\d{2})(\d{2})\.csv$"),
+              "CURSE": re.compile(r"^Forum/Curse_Cidef_(\d{4})(\d{2})(\d{2})\.csv$"),
+          }
+          coverage = {(r["snapshot_date"], r["source_type"]): int(r["rows"]) for r in raw}
+          candidates = []
+          for blob in blobs:
+              name = blob.get("name", "")
+              for source_type, pattern in patterns.items():
+                  match = pattern.fullmatch(name)
+                  if not match:
+                      continue
+                  date = "-".join(match.groups())
+                  if coverage.get((date, source_type), 0) == 0:
+                      candidates.append({"snapshot_date": date, "source_type": source_type, "blob_name": name, "file": "/forum_recovery/files/" + name.split("/")[-1]})
+          candidates.sort(key=lambda x: (x["snapshot_date"], x["source_type"]))
+          with open(manifest_path, "w", encoding="utf-8") as f:
+              json.dump(candidates, f)
+          with open(tsv_path, "w", encoding="utf-8") as f:
+              for item in candidates:
+                  f.write(item["snapshot_date"] + "\t" + item["source_type"] + "\t" + item["blob_name"] + "\n")
+          print(json.dumps({"available_forum_csvs": sum(1 for b in blobs if b.get("name", "").endswith(".csv")), "missing_azure_snapshots": candidates}))
+          PY
+
+          while IFS=$'\t' read -r snapshot_date source_type blob_name; do
+            [[ -n "$blob_name" ]] || continue
+            filename="${blob_name##*/}"
+            echo "Downloading original R2 mirror file: $blob_name ($snapshot_date $source_type)"
+            az storage blob download \
+              --account-name cidefprodstorage \
+              --container-name cidef \
+              --auth-mode login \
+              --name "$blob_name" \
+              --file "$WORK_DIR/files/$filename" \
+              --only-show-errors \
+              --output none
+          done < "$WORK_DIR/manifest.tsv"
+
+          chmod -R a+rX "$WORK_DIR"
+          if [[ -s "$WORK_DIR/manifest.tsv" ]]; then
+            docker run --rm \
+              --entrypoint node \
+              -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
+              -v "$WORK_DIR:/forum_recovery:ro" \
+              "$IMAGE" scripts/recover-forum-snapshots-azure.js /forum_recovery/manifest.json
+          fi
+          rm -rf "$WORK_DIR"
 
       - name: Verify SALES P1 against Azure PostgreSQL
         env:
