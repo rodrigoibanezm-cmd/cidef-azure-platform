@@ -10,6 +10,7 @@ on:
       - 'scripts/verify-rvm-p1.js'
       - 'scripts/verify-crm-p1.js'
       - 'scripts/verify-forum-p1.js'
+      - 'scripts/install-forum-universe-view.js'
       - 'Dockerfile.pg-mcp'
       - '.github/workflows/deploy-pg-mcp.yml'
   workflow_dispatch:
@@ -81,6 +82,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          docker run --rm \
+            --entrypoint node \
+            -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
+            "$IMAGE" scripts/install-forum-universe-view.js
           docker run --rm \
             --entrypoint node \
             -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \

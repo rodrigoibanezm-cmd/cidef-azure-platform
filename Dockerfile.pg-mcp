@@ -9,6 +9,7 @@ COPY scripts/verify-sales-p1.js ./scripts/verify-sales-p1.js
 COPY scripts/verify-rvm-p1.js ./scripts/verify-rvm-p1.js
 COPY scripts/verify-crm-p1.js ./scripts/verify-crm-p1.js
 COPY scripts/verify-forum-p1.js ./scripts/verify-forum-p1.js
+COPY scripts/install-forum-universe-view.js ./scripts/install-forum-universe-view.js
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
