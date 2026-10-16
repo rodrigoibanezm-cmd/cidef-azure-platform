@@ -1,19 +1,19 @@
 import http from "node:http";
 import crypto from "node:crypto";
-import { Pool } from "pg";
 import { z } from "zod";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { getAzurePool } from "../lib/azure-postgres.js";
+import { ventasMonthlyActualV01 } from "../lib/motors/ventas-monthly-actual-v01.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const TENANT_ID = required("MCP_ENTRA_TENANT_ID");
 const CLIENT_ID = required("MCP_ENTRA_CLIENT_ID");
 const PUBLIC_URL = required("MCP_PUBLIC_URL").replace(/\/$/, "");
-const DATABASE_URL = required("DATABASE_URL");
 const ISSUER = `https://login.microsoftonline.com/${TENANT_ID}/v2.0`;
 const JWKS = createRemoteJWKSet(new URL(`https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`));
-const pool = new Pool({ connectionString: DATABASE_URL, max: 5, connectionTimeoutMillis: 10000, statement_timeout: 30000 });
+const pool = getAzurePool();
 
 function required(name) {
   const value = process.env[name];
@@ -132,6 +132,24 @@ function makeServer(principal) {
         return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
       } catch (error) {
         audit({ action: "mcp.tool", tool: name, subject: principal.subject, status: "error" });
+        return { isError: true, content: [{ type: "text", text: error.message }] };
+      }
+    });
+  }
+  if (principal.permissions.read) {
+    server.registerTool("ventas_monthly_actual_v01", {
+      description: "Return certified CIDEF monthly sales for a target month, using the original SALES engine contract and Azure PostgreSQL.",
+      inputSchema: {
+        target_month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+        cutoff_month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+      }
+    }, async (input) => {
+      try {
+        const result = await ventasMonthlyActualV01(input);
+        audit({ action: "mcp.tool", tool: "ventas_monthly_actual_v01", subject: principal.subject, status: "success" });
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        audit({ action: "mcp.tool", tool: "ventas_monthly_actual_v01", subject: principal.subject, status: "error" });
         return { isError: true, content: [{ type: "text", text: error.message }] };
       }
     });

@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'mcp/**'
+      - 'lib/**'
+      - 'scripts/verify-sales-p1.js'
       - 'Dockerfile.pg-mcp'
       - '.github/workflows/deploy-pg-mcp.yml'
   workflow_dispatch:
@@ -36,6 +38,17 @@ jobs:
           docker build --file Dockerfile.pg-mcp --tag "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Verify SALES P1 against Azure PostgreSQL
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --entrypoint node \
+            -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
+            "$IMAGE" scripts/verify-sales-p1.js
 
       - name: Deploy to existing Container Apps environment
         env:
@@ -147,7 +160,7 @@ jobs:
           az containerapp update \
             --resource-group "$RG" \
             --name "$APP" \
-            --set-env-vars "DATABASE_URL=secretref:database-url" "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" "MCP_PUBLIC_URL=https://$FQDN" \
+            --set-env-vars "AZURE_DATABASE_URL=secretref:database-url" "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" "MCP_PUBLIC_URL=https://$FQDN" \
             --output none
           wait_for_app
 

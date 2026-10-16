@@ -13,7 +13,7 @@ Plataforma independiente de ingesta, normalización, motores, APIs y MCP de CIDE
 
 ## Estado inicial
 
-Repositorio nuevo, sin despliegue automático habilitado. La carga de `ventas_raw` ya se validó en Azure usando el proceso existente; su código y pipeline todavía deben trasladarse y certificarse aquí antes de sustituir ese despliegue.
+El MCP PostgreSQL existente ya se despliega desde este repositorio. La primera capacidad P1 incorporada es el motor SALES `ventas_monthly_actual_v01`, expuesto como herramienta de lectura del MCP y conectado exclusivamente mediante `AZURE_DATABASE_URL`.
 
 ## Orden de construcción
 
