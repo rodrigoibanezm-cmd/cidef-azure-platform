@@ -61,12 +61,24 @@ try {
   const azureApproved = new Set(azureApprovedRows.map(row => String(row.operation_number)));
   const azureOnly = [...azureApproved].filter(id => !neonApproved.has(id)).sort();
   const neonOnly = [...neonApproved].filter(id => !azureApproved.has(id)).sort();
+  const azureDeltaEvidence = azureOnly.length
+    ? await azureQuery(`
+        SELECT snapshot_date::text, source_type, numero_operacion::text AS operation_number,
+          tipo_proceso, fecha_cotizacion::date::text AS quotation_date,
+          fecha_precurse::date::text AS precurse_date, fecha_curse::date::text AS curse_date,
+          cantidad_vehiculo, source_file, load_kind
+        FROM public.forum_funnel_raw
+        WHERE numero_operacion::text = ANY($1::text[])
+        ORDER BY snapshot_date, source_type
+      `, [azureOnly])
+    : [];
   console.log(JSON.stringify({
     source: 'FORUM_APPROVED_OPERATION_ID_DELTA',
     neon_count: neonApproved.size,
     azure_count: azureApproved.size,
     azure_only_operation_numbers: azureOnly,
     neon_only_operation_numbers: neonOnly,
+    azure_only_raw_evidence: azureDeltaEvidence,
   }));
 
   const contract = describeForum();
