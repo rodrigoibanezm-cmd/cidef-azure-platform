@@ -86,8 +86,7 @@ jobs:
                   if not match:
                       continue
                   date = "-".join(match.groups())
-                  if coverage.get((date, source_type), 0) == 0:
-                      candidates.append({"snapshot_date": date, "source_type": source_type, "blob_name": name, "file": "/forum_recovery/files/" + name.split("/")[-1]})
+                  candidates.append({"snapshot_date": date, "source_type": source_type, "blob_name": name, "file": "/forum_recovery/files/" + name.split("/")[-1]})
           candidates.sort(key=lambda x: (x["snapshot_date"], x["source_type"]))
           with open(manifest_path, "w", encoding="utf-8") as f:
               json.dump(candidates, f)
