@@ -11,6 +11,7 @@ on:
       - 'scripts/verify-crm-p1.js'
       - 'scripts/verify-forum-p1.js'
       - 'scripts/install-forum-universe-view.js'
+      - 'scripts/sync-forum-snapshot-to-azure.js'
       - 'Dockerfile.pg-mcp'
       - '.github/workflows/deploy-pg-mcp.yml'
   workflow_dispatch:
@@ -75,6 +76,23 @@ jobs:
             --entrypoint node \
             -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
             "$IMAGE" scripts/verify-crm-p1.js
+
+      - name: Sync existing Forum snapshot 2026-10-10 to Azure
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DATABASE_URL:-}" ]]; then
+            echo "::error::DATABASE_URL source credential is required for the read-only Neon to Azure snapshot sync"
+            exit 1
+          fi
+          docker run --rm \
+            --entrypoint node \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
+            "$IMAGE" scripts/sync-forum-snapshot-to-azure.js 2026-10-10 2026-10-10
 
       - name: Verify FORUM P1 against Neon September baseline
         env:
