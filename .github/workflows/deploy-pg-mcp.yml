@@ -57,7 +57,7 @@ jobs:
           az storage blob list \
             --account-name cidefprodstorage \
             --container-name cidef \
-            --auth-mode login \
+            --auth-mode key \
             --prefix Forum/ \
             --output json > "$WORK_DIR/blob-list.json"
           docker run --rm \
@@ -104,7 +104,7 @@ jobs:
             az storage blob download \
               --account-name cidefprodstorage \
               --container-name cidef \
-              --auth-mode login \
+              --auth-mode key \
               --name "$blob_name" \
               --file "$WORK_DIR/files/$filename" \
               --only-show-errors \
