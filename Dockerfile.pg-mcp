@@ -6,6 +6,7 @@ RUN npm install --omit=dev --no-audit --no-fund
 COPY mcp/server.js ./server.js
 COPY lib ./lib
 COPY scripts/verify-sales-p1.js ./scripts/verify-sales-p1.js
+COPY scripts/verify-rvm-p1.js ./scripts/verify-rvm-p1.js
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]

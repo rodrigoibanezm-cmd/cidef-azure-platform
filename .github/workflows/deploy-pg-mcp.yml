@@ -7,6 +7,7 @@ on:
       - 'mcp/**'
       - 'lib/**'
       - 'scripts/verify-sales-p1.js'
+      - 'scripts/verify-rvm-p1.js'
       - 'Dockerfile.pg-mcp'
       - '.github/workflows/deploy-pg-mcp.yml'
   workflow_dispatch:
@@ -49,6 +50,17 @@ jobs:
             --entrypoint node \
             -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
             "$IMAGE" scripts/verify-sales-p1.js
+
+      - name: Verify RVM P1 against Neon September baseline
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --entrypoint node \
+            -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
+            "$IMAGE" scripts/verify-rvm-p1.js
 
       - name: Deploy to existing Container Apps environment
         env:

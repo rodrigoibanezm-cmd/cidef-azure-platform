@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { getAzurePool } from "../lib/azure-postgres.js";
 import { ventasMonthlyActualV01 } from "../lib/motors/ventas-monthly-actual-v01.js";
+import { describeRvm, inspectRvm, fetchRvm, observeRvmEvidence } from "../lib/data-floor/rvmCertifier.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const TENANT_ID = required("MCP_ENTRA_TENANT_ID");
@@ -153,6 +154,60 @@ function makeServer(principal) {
         return { isError: true, content: [{ type: "text", text: error.message }] };
       }
     });
+
+    const rvmFilters = z.record(z.string(), z.unknown()).optional();
+    const registerRvmTool = (name, description, inputSchema, operation) => {
+      server.registerTool(name, { description, inputSchema }, async (input) => {
+        try {
+          const result = await operation(input);
+          audit({ action: "mcp.tool", tool: name, subject: principal.subject, status: "success" });
+          return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+        } catch (error) {
+          audit({ action: "mcp.tool", tool: name, subject: principal.subject, status: "error" });
+          return { isError: true, content: [{ type: "text", text: error.message }] };
+        }
+      });
+    };
+
+    registerRvmTool(
+      "rvm_data_describe",
+      "Describe the certified RVM P1 source contract and semantics.",
+      {},
+      () => describeRvm(),
+    );
+    registerRvmTool(
+      "rvm_data_inspect",
+      "Inspect certified RVM P1 coverage and quality without returning factual rows.",
+      { filters: rvmFilters },
+      ({ filters }) => inspectRvm({ filters }),
+    );
+    registerRvmTool(
+      "rvm_data_fetch",
+      "Fetch certified RVM P1 factual rows with optional fields and semantic filters.",
+      { fields: z.array(z.string()).optional(), filters: rvmFilters },
+      ({ fields, filters }) => fetchRvm({ fields, filters }),
+    );
+    registerRvmTool(
+      "rvm_data_observe",
+      "Return certified RVM P1 quantitative, period-series, or dimensional evidence.",
+      {
+        measure: z.enum(["RVM_UNITS"]).optional(),
+        evidence_shape: z.enum([
+          "QUANTITATIVE_OBSERVATION",
+          "PERIOD_OBSERVATION_SERIES",
+          "DIMENSIONAL_QUANTITATIVE_DATASET",
+        ]).optional(),
+        dimension: z.enum([
+          "REGION", "BRAND", "MODEL", "SEGMENT",
+          "BRAND_MODEL", "SEGMENT_BRAND", "SEGMENT_BRAND_MODEL",
+        ]).optional(),
+        period: z.string().optional(),
+        period_from: z.string().optional(),
+        period_to: z.string().optional(),
+        filters: rvmFilters,
+      },
+      (input) => observeRvmEvidence(input),
+    );
   }
   return server;
 }
