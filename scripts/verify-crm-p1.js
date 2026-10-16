@@ -86,7 +86,7 @@ try {
   assert.equal(dataValidation.current_state_unique_ids, true);
   assert.equal(dataValidation.valid, true);
 
-  const brands = get('COMPANY:LEADS_CREATED:BRAND');
+  const brands = get('COMPANY:LEADS_CREATED:BRAND', 'DIMENSIONAL_QUANTITATIVE_DATASET');
   const brandValues = Object.fromEntries(brands.payload.members.map(member => [member.member_id, member.value]));
   assert.equal(brands.payload.members.length, 5);
   assert.equal(brandValues.DONGFENG, 673);
@@ -95,7 +95,7 @@ try {
   assert.equal(brandValues.NOT_APPLICABLE, 1198);
   assert.equal(brandValues.AMBIGUOUS, 1);
 
-  const stores = get('OWN_STORES:LEADS_CREATED:STORE');
+  const stores = get('OWN_STORES:LEADS_CREATED:STORE', 'DIMENSIONAL_QUANTITATIVE_DATASET');
   const storeValues = Object.fromEntries(stores.payload.members.map(member => [member.member_label, member.value]));
   assert.equal(stores.payload.members.length, 12);
   assert.equal(stores.payload.series[0].value, 2985);
