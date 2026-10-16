@@ -93,7 +93,8 @@ async function insertRows(client, date, type, filename, rows) {
 const manifestPath = process.argv[2];
 assert.ok(manifestPath, 'Manifest path is required');
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-assert.ok(Array.isArray(manifest) && manifest.length, 'Manifest has no FORUM snapshots to recover');
+assert.ok(Array.isArray(manifest), 'Manifest must be a FORUM snapshot array');
+if (manifest.length === 0) { console.log(JSON.stringify({ status: 'NO_FORUM_SNAPSHOT_FILES_IN_BLOB_MIRROR', files: [] })); process.exit(0); }
 const certified = [];
 const pool = getAzurePool();
 try {
@@ -104,19 +105,30 @@ try {
     assert.match(filename, /^((Cotizacion_Cidef)|(Precurse_Cidef)|(Curse_Cidef))_\d{8}\.csv$/);
     const rows = parseCsv(await readFile(item.file), item.source_type);
     const client = await pool.connect();
-    let before; let after;
+    let existing; let beforeCount; let afterCount;
     try {
-      const beforeResult = await client.query(`SELECT count(*)::int AS rows FROM public.forum_funnel_raw WHERE snapshot_date=$1 AND source_type=$2 AND load_kind='DAILY_SNAPSHOT'`, [item.snapshot_date, item.source_type]);
-      before = beforeResult.rows[0];
       await client.query('BEGIN');
-      try { await insertRows(client, item.snapshot_date, item.source_type, item.blob_name, rows); await client.query('COMMIT'); }
-      catch (error) { await client.query('ROLLBACK'); throw error; }
-      const afterResult = await client.query(`SELECT count(*)::int AS rows, count(DISTINCT numero_operacion)::int AS operations FROM public.forum_funnel_raw WHERE snapshot_date=$1 AND source_type=$2 AND load_kind='DAILY_SNAPSHOT'`, [item.snapshot_date, item.source_type]);
-      after = afterResult.rows[0];
+      const current = await client.query(`SELECT numero_operacion::text AS numero_operacion FROM public.forum_funnel_raw WHERE snapshot_date=$1 AND source_type=$2 AND load_kind='DAILY_SNAPSHOT' FOR UPDATE`, [item.snapshot_date, item.source_type]);
+      existing = new Set(current.rows.map(row => row.numero_operacion));
+      beforeCount = existing.size;
+      const sourceOperations = new Set(rows.map(row => row.numero_operacion));
+      const extra = [...existing].filter(operation => !sourceOperations.has(operation));
+      assert.equal(extra.length, 0, `Azure has operations absent from the original R2 CSV for ${item.snapshot_date} ${item.source_type}: ${extra.slice(0, 10).join(',')}`);
+      const missingRows = rows.filter(row => !existing.has(row.numero_operacion));
+      if (missingRows.length) await insertRows(client, item.snapshot_date, item.source_type, item.blob_name, missingRows);
+      const after = await client.query(`SELECT numero_operacion::text AS numero_operacion FROM public.forum_funnel_raw WHERE snapshot_date=$1 AND source_type=$2 AND load_kind='DAILY_SNAPSHOT'`, [item.snapshot_date, item.source_type]);
+      const actualOperations = new Set(after.rows.map(row => row.numero_operacion));
+      const unresolved = [...sourceOperations].filter(operation => !actualOperations.has(operation));
+      assert.equal(unresolved.length, 0, `Could not insert R2 operations for ${item.snapshot_date} ${item.source_type}: ${unresolved.slice(0, 10).join(',')}`);
+      afterCount = actualOperations.size;
+      assert.equal(afterCount, sourceOperations.size, `Snapshot row count differs from source for ${item.snapshot_date} ${item.source_type}`);
+      await client.query('COMMIT');
+      certified.push({ snapshot_date: item.snapshot_date, source_type: item.source_type, source_rows: rows.length, rows_before: beforeCount, inserted_rows: missingRows.length, inserted_operations: missingRows.map(row => row.numero_operacion), rows_after: afterCount, blob_name: item.blob_name });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
     } finally { client.release(); }
-    assert.equal(Number(after.rows), rows.length, `Snapshot row certification failed for ${item.snapshot_date} ${item.source_type}`);
-    assert.equal(Number(after.operations), rows.length, `Snapshot operation certification failed for ${item.snapshot_date} ${item.source_type}`);
-    certified.push({ snapshot_date: item.snapshot_date, source_type: item.source_type, source_rows: rows.length, rows_before: Number(before.rows), rows_after: Number(after.rows), blob_name: item.blob_name });
+    assert.equal(afterCount, rows.length, `Snapshot operation certification failed for ${item.snapshot_date} ${item.source_type}`);
   }
-  console.log(JSON.stringify({ status: 'RECOVERED_FROM_AZURE_BLOB_MIRROR', files: certified }));
+  console.log(JSON.stringify({ status: 'COMPARED_AND_RECOVERED_FROM_AZURE_BLOB_MIRROR', files: certified, recovered_rows: certified.reduce((sum, file) => sum + file.inserted_rows, 0) }));
 } finally { await closeAzurePool(); }

@@ -94,7 +94,7 @@ jobs:
           with open(tsv_path, "w", encoding="utf-8") as f:
               for item in candidates:
                   f.write(item["snapshot_date"] + "\t" + item["source_type"] + "\t" + item["blob_name"] + "\n")
-          print(json.dumps({"available_forum_csvs": sum(1 for b in blobs if b.get("name", "").endswith(".csv")), "missing_azure_snapshots": candidates}))
+          print(json.dumps({"available_forum_csvs": sum(1 for b in blobs if b.get("name", "").endswith(".csv")), "forum_mirror_files_to_compare": candidates}))
           PY
 
           while IFS=$'\t' read -r snapshot_date source_type blob_name; do
