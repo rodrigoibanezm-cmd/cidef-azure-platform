@@ -51,16 +51,20 @@ try {
   assert.equal(contract.measures.UFIS.rule, 'CURSE_VEHICLE_UNITS_BY_FECHA_CURSE');
 
   const results = {};
+  const mismatches = {};
   for (const [measure, expected] of Object.entries(neonBaseline)) {
     const evidence = await observeForumEvidence({ measure, period, cutoff });
     assert.equal(evidence.status, 'COMPLETE', `${measure} evidence is incomplete`);
     assert.equal(evidence.evidence_version, '0.11', `${measure} contract version differs`);
     assert.equal(evidence.temporal.from, '2026-09-01', `${measure} period start differs`);
     assert.equal(evidence.temporal.to, cutoff, `${measure} cutoff differs`);
-    assert.equal(evidence.payload.value, expected, `${measure} differs from Neon`);
     results[measure] = evidence.payload.value;
+    if (evidence.payload.value !== expected) {
+      mismatches[measure] = { neon: expected, azure: evidence.payload.value };
+    }
   }
 
+  const neonBaselineMatch = Object.keys(mismatches).length === 0;
   console.log(JSON.stringify({
     source: 'FORUM',
     contract_version: contract.version,
@@ -68,8 +72,10 @@ try {
     cutoff,
     azure: results,
     neon_baseline: neonBaseline,
-    neon_baseline_match: true,
+    mismatches,
+    neon_baseline_match: neonBaselineMatch,
   }));
+  assert.deepEqual(mismatches, {}, 'FORUM P1 differs from Neon September baseline');
 } finally {
   await closeAzurePool();
 }
