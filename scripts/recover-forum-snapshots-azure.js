@@ -104,7 +104,7 @@ try {
     const filename = path.basename(item.file);
     const filenameMatch = filename.match(/^((Cotizacion_Cidef)|(Precurse_Cidef)|(Curse_Cidef))_(\d{4})(\d{2})(\d{2})\.csv$/);
     assert.ok(filenameMatch, `Invalid FORUM snapshot filename: ${filename}`);
-    const receivedFileDate = `${filenameMatch[4]}-${filenameMatch[5]}-${filenameMatch[6]}`;
+    const receivedFileDate = `${filenameMatch[5]}-${filenameMatch[6]}-${filenameMatch[7]}`;
     assert.equal(item.snapshot_date, receivedFileDate, `snapshot_date must match the file receipt date in ${filename}`);
     const operationDateField = { COTIZACION: 'fecha_cotizacion', PRECURSE: 'fecha_precurse', CURSE: 'fecha_curse' }[item.source_type];
     const rows = parseCsv(await readFile(item.file), item.source_type);
