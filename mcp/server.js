@@ -7,6 +7,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { getAzurePool } from "../lib/azure-postgres.js";
 import { ventasMonthlyActualV01 } from "../lib/motors/ventas-monthly-actual-v01.js";
 import { describeRvm, inspectRvm, fetchRvm, observeRvmEvidence } from "../lib/data-floor/rvmCertifier.js";
+import { describeCrm, inspectCrm, observeCrmEvidence } from "../lib/data-floor/crmCertifier.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const TENANT_ID = required("MCP_ENTRA_TENANT_ID");
@@ -156,7 +157,7 @@ function makeServer(principal) {
     });
 
     const rvmFilters = z.record(z.string(), z.unknown()).optional();
-    const registerRvmTool = (name, description, inputSchema, operation) => {
+    const registerDataFloorTool = (name, description, inputSchema, operation) => {
       server.registerTool(name, { description, inputSchema }, async (input) => {
         try {
           const result = await operation(input);
@@ -169,25 +170,25 @@ function makeServer(principal) {
       });
     };
 
-    registerRvmTool(
+    registerDataFloorTool(
       "rvm_data_describe",
       "Describe the certified RVM P1 source contract and semantics.",
       {},
       () => describeRvm(),
     );
-    registerRvmTool(
+    registerDataFloorTool(
       "rvm_data_inspect",
       "Inspect certified RVM P1 coverage and quality without returning factual rows.",
       { filters: rvmFilters },
       ({ filters }) => inspectRvm({ filters }),
     );
-    registerRvmTool(
+    registerDataFloorTool(
       "rvm_data_fetch",
       "Fetch certified RVM P1 factual rows with optional fields and semantic filters.",
       { fields: z.array(z.string()).optional(), filters: rvmFilters },
       ({ fields, filters }) => fetchRvm({ fields, filters }),
     );
-    registerRvmTool(
+    registerDataFloorTool(
       "rvm_data_observe",
       "Return certified RVM P1 quantitative, period-series, or dimensional evidence.",
       {
@@ -207,6 +208,42 @@ function makeServer(principal) {
         filters: rvmFilters,
       },
       (input) => observeRvmEvidence(input),
+    );
+
+    const crmFilters = z.record(z.string(), z.unknown()).optional();
+    registerDataFloorTool(
+      "crm_data_describe",
+      "Describe the certified CRM P1 source contract and semantics.",
+      {},
+      () => describeCrm(),
+    );
+    registerDataFloorTool(
+      "crm_data_inspect",
+      "Inspect certified CRM P1 coverage and quality for the requested date range.",
+      { filters: crmFilters },
+      ({ filters }) => inspectCrm({ filters }),
+    );
+    registerDataFloorTool(
+      "crm_data_observe",
+      "Return certified CRM P1 quantitative, period-series, or dimensional evidence.",
+      {
+        measure: z.enum([
+          "LEADS_CREATED", "LEADS_ASSIGNED", "SOLD", "CONVERSION_RATE",
+          "MANAGED", "UNMANAGED", "MANAGEMENT_RATE",
+        ]),
+        evidence_shape: z.enum([
+          "QUANTITATIVE_OBSERVATION",
+          "PERIOD_OBSERVATION_SERIES",
+          "DIMENSIONAL_QUANTITATIVE_DATASET",
+        ]).optional(),
+        dimension: z.enum(["STORE", "BRAND", "PRODUCT_INTEREST", "SELLER", "ORIGIN"]).optional(),
+        period: z.string().optional(),
+        period_from: z.string().optional(),
+        period_to: z.string().optional(),
+        cutoff: z.string().optional(),
+        filters: crmFilters,
+      },
+      (input) => observeCrmEvidence(input),
     );
   }
   return server;
