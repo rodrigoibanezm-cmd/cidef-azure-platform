@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { closeAzurePool } from '../lib/azure-postgres.js';
+import { azureQuery, closeAzurePool } from '../lib/azure-postgres.js';
 import { describeForum, observeForumEvidence } from '../lib/data-floor/forumCertifier.js';
 
 const period = '2026-09';
@@ -16,6 +16,32 @@ const neonBaseline = {
 };
 
 try {
+  const objects = await azureQuery(`
+    WITH expected(name) AS (VALUES
+      ('forum_funnel_universe_v01'), ('forum_funnel_raw'),
+      ('forum_cotizacion_raw'), ('forum_curse_raw'), ('forum_raw'),
+      ('producto_aliases_v01'), ('marcas_master_v01'),
+      ('dealer_aliases'), ('dealers_master'), ('dealer_groups'),
+      ('sucursal_aliases'), ('sucursales_master'), ('persona_aliases'), ('personas_master')
+    )
+    SELECT e.name, n.nspname AS schema_name,
+      CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned_table'
+        WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view' ELSE c.relkind::text END AS object_type
+    FROM expected e
+    LEFT JOIN pg_class c ON c.relname=e.name
+    LEFT JOIN pg_namespace n ON n.oid=c.relnamespace AND n.nspname IN ('public','azure_forum_migration')
+    ORDER BY e.name,n.nspname
+  `);
+  const rawCounts = {};
+  for (const schema of ['public', 'azure_forum_migration']) {
+    const relation = `${schema}.forum_funnel_raw`;
+    if (objects.some(row => row.schema_name === schema && row.name === 'forum_funnel_raw')) {
+      const [count] = await azureQuery(`SELECT count(*)::bigint AS rows FROM ${relation}`);
+      rawCounts[relation] = Number(count.rows);
+    }
+  }
+  console.log(JSON.stringify({ source: 'FORUM_AZURE_SCHEMA_INVENTORY', objects, raw_counts: rawCounts }));
+
   const contract = describeForum();
   assert.equal(contract.version, '0.11');
   assert.deepEqual(contract.operations, ['DESCRIBE', 'INSPECT', 'FETCH', 'OBSERVE']);
