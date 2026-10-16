@@ -8,6 +8,7 @@ import { getAzurePool } from "../lib/azure-postgres.js";
 import { ventasMonthlyActualV01 } from "../lib/motors/ventas-monthly-actual-v01.js";
 import { describeRvm, inspectRvm, fetchRvm, observeRvmEvidence } from "../lib/data-floor/rvmCertifier.js";
 import { describeCrm, inspectCrm, observeCrmEvidence } from "../lib/data-floor/crmCertifier.js";
+import { describeForum, inspectForum, fetchForum, observeForumEvidence } from "../lib/data-floor/forumCertifier.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const TENANT_ID = required("MCP_ENTRA_TENANT_ID");
@@ -244,6 +245,52 @@ function makeServer(principal) {
         filters: crmFilters,
       },
       (input) => observeCrmEvidence(input),
+    );
+
+    const forumFilters = z.record(z.string(), z.unknown()).optional();
+    registerDataFloorTool(
+      "forum_data_describe",
+      "Describe the certified FORUM P1 source contract and financing-funnel semantics.",
+      {},
+      () => describeForum(),
+    );
+    registerDataFloorTool(
+      "forum_data_inspect",
+      "Inspect certified FORUM P1 coverage and quality without returning factual rows.",
+      { filters: forumFilters },
+      ({ filters }) => inspectForum({ filters }),
+    );
+    registerDataFloorTool(
+      "forum_data_fetch",
+      "Fetch certified FORUM P1 factual operations with optional fields and semantic filters.",
+      { fields: z.array(z.string()).optional(), filters: forumFilters },
+      ({ fields, filters }) => fetchForum({ fields, filters }),
+    );
+    registerDataFloorTool(
+      "forum_data_observe",
+      "Return certified FORUM P1 quantitative, period-series, dimensional, or exact-snapshot evidence.",
+      {
+        measure: z.enum([
+          "OPERATION_STATES", "QUOTATIONS", "APPLICATIONS", "CURSES", "UFIS",
+          "COHORT_CONVERTED", "COHORT_APPROVED", "COHORT_EXPIRED", "COHORT_REJECTED",
+        ]),
+        evidence_shape: z.enum([
+          "QUANTITATIVE_OBSERVATION",
+          "CUMULATIVE_PERIOD_OBSERVATION",
+          "DIMENSIONAL_QUANTITATIVE_DATASET",
+          "OPERATION_STATE_SNAPSHOT",
+        ]).optional(),
+        dimension: z.enum([
+          "BRAND", "COMMERCIAL_OUTCOME", "NETWORK", "DISTRIBUTOR", "STORE", "SELLER",
+          "EXECUTIVE", "MODEL", "VERSION", "STATUS", "CERTIFIED_STAGE",
+        ]).optional(),
+        period: z.string().optional(),
+        period_from: z.string().optional(),
+        period_to: z.string().optional(),
+        cutoff: z.string().optional(),
+        filters: forumFilters,
+      },
+      (input) => observeForumEvidence(input),
     );
   }
   return server;
