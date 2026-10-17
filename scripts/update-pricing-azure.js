@@ -30,14 +30,39 @@ if (!dongfeng008 || dongfeng008.precio_lista !== 32590000 || dongfeng008.bono_fo
   throw new Error('DONGFENG 008 source row did not match the certified 2026-10-14 values');
 }
 
+const pool = getAzurePool();
+const priorPricingResult = await pool.query(
+  `SELECT COUNT(*)::int AS history_rows,
+          COUNT(DISTINCT price_version_id)::int AS versions,
+          COUNT(DISTINCT (price_version_id, source_sheet, source_row))::int AS source_rows
+     FROM price_history
+    WHERE source_file=$1 AND vigencia_desde=$2::date`,
+  [sourceFile, expectedDate],
+);
+const priorDongfengResult = await pool.query(
+  `SELECT pv.modelo,COALESCE(pv.version_raw,pv.version) AS version,
+          ph.precio_lista,ph.bono_forum,ph.precio_efectivo_final_sin_iva,
+          ph.source_sheet,ph.source_row
+     FROM price_history ph
+     JOIN price_versions pv USING(price_version_id)
+    WHERE ph.source_file=$1 AND ph.vigencia_desde=$2::date
+      AND pv.marca='DONGFENG' AND pv.modelo IN ('007','008')
+    ORDER BY pv.modelo,ph.source_sheet,ph.source_row`,
+  [sourceFile, expectedDate],
+);
+const pricingPresentBefore = {
+  ...priorPricingResult.rows[0],
+  dongfeng_007_008: priorDongfengResult.rows,
+};
+
 const importResult = await importPrices({ workbook_files: [{ name: sourceFile, path: inputPath }] });
 const masterText = (value) => String(value ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
 const uniqueProducts = new Map();
 for (const item of current) uniqueProducts.set([item.marca, item.modelo, item.version].join('|'), item);
 
-const pool = getAzurePool();
 const client = await pool.connect();
 const inserted = { brands: 0, models: 0, versions: 0, aliases: 0 };
+const canonicalVersionReuses = [];
 const productIds = [];
 try {
   await client.query('BEGIN');
@@ -82,10 +107,20 @@ try {
     const versionRows = (await client.query(
       `SELECT version_id,nombre_canonico FROM versiones_master_v01 WHERE modelo_id=$1 AND nombre_normalizado=$2`,
       [modeloId, version])).rows;
-    if (versionRows.length !== 1 || versionRows[0].nombre_canonico !== item.version) {
+    if (versionRows.length !== 1) {
       throw new Error(`Conflicting canonical version identity: ${item.marca}/${item.modelo}/${item.version}`);
     }
+    const canonicalVersion = versionRows[0].nombre_canonico;
+    if (masterText(canonicalVersion) !== masterText(item.version)) {
+      throw new Error(`Conflicting canonical version identity: ${item.marca}/${item.modelo}/${item.version} (existing: ${canonicalVersion})`);
+    }
     const versionId = versionRows[0].version_id;
+    if (canonicalVersion !== item.version) {
+      canonicalVersionReuses.push({
+        marca:item.marca,modelo:item.modelo,received:item.version,
+        canonical:canonicalVersion,version_id:versionId,
+      });
+    }
     const aliases = (await client.query(
       `SELECT alias_id,version_id,estado FROM producto_aliases_v01
        WHERE fuente='lista_precios' AND nivel='VERSION'
@@ -126,11 +161,13 @@ console.log(JSON.stringify({
   engine:'Azure append-only pricing import',
   source_file:sourceFile,
   operational_vigencia:expectedDate,
+  pricing_present_before:pricingPresentBefore,
   rows_staged:importResult.rowsStaged,
   rows_normalized:importResult.rowsNormalized,
   price_versions_touched:importResult.versionsTouched,
   price_history_inserted:importResult.historyInserted,
   masters_added:inserted,
+  canonical_version_reuses:canonicalVersionReuses,
   dongfeng_products:productIds,
   audit:{blockingRejectedRows:audit.blockingRejectedRows,rowsWithoutDeclaredVigencia:audit.rowsWithoutDeclaredVigencia}
 },null,2));
