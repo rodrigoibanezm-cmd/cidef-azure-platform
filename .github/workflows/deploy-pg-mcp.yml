@@ -69,11 +69,17 @@ jobs:
         run: |
           set -euo pipefail
           WORK_DIR=$(mktemp -d)
+          AZURE_STORAGE_KEY=$(az storage account keys list --account-name cidefprodstorage --query '[0].value' --output tsv)
+          if [[ -z "$AZURE_STORAGE_KEY" ]]; then
+            echo "::error::Could not obtain the existing Azure Storage account key using the OIDC identity"
+            exit 1
+          fi
           mkdir -p "$WORK_DIR/files"
           az storage blob list \
             --account-name cidefprodstorage \
             --container-name cidef \
-            --auth-mode login \
+            --auth-mode key \
+              --account-key "$AZURE_STORAGE_KEY" \
             --prefix Forum/ \
             --output json > "$WORK_DIR/blob-list.json"
           docker run --rm \
@@ -119,7 +125,8 @@ jobs:
             az storage blob download \
               --account-name cidefprodstorage \
               --container-name cidef \
-              --auth-mode login \
+              --auth-mode key \
+              --account-key "$AZURE_STORAGE_KEY" \
               --name "$blob_name" \
               --file "$WORK_DIR/files/$filename" \
               --only-show-errors \
