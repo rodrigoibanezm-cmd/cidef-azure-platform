@@ -1,4 +1,4 @@
-import { canonicalPricingRow, validateCanonicalPricingRow } from './pricing/canonicalPricingRow.js';
+import { canonicalPricingRow, validateCanonicalPricingRow } from './canonicalPricingRow.js';
 
 const VERSION_FIELDS = [
   'version',
