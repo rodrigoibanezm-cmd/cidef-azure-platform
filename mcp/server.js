@@ -143,7 +143,7 @@ function makeServer(principal) {
   if (principal.permissions.read) {
     server.registerTool("pricing_history_v01", {
       description: "Return certified CIDEF pricing history and assigned VINs from Azure PostgreSQL using the original PRICING P1 contract.",
-      inputSchema: z.object({
+      inputSchema: {
         brand: z.string().optional(),
         model: z.string().optional(),
         version: z.string().optional(),
@@ -152,7 +152,7 @@ function makeServer(principal) {
         date_to: z.string().optional(),
         include_conflicts: z.boolean().optional(),
         price_episode_id: z.number().int().optional(),
-      }).strict()
+      }
     }, async (input) => {
       try {
         const result = await pricingHistoryV01(input);
