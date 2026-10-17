@@ -46,15 +46,22 @@ jobs:
             --account-name cidefprodstorage \
             --container-name cidef \
             --auth-mode key \
-            --prefix precios/ \
             --output json > "$WORK_DIR/blob-list.json"
-          python3 - "$WORK_DIR/blob-list.json" "$WORK_DIR/selected.json" <<'PY'
+          python3 - "$WORK_DIR/blob-list.json" "$WORK_DIR/selected.json" "$GITHUB_OUTPUT" <<'PY'
           import json, re, sys
           items = json.load(open(sys.argv[1], encoding="utf-8"))
-          pattern = re.compile(r"LISTA.*PRECIOS.*14[-_ ]?10[-_ ]?2026.*\.xlsb$", re.I)
-          matches = [x for x in items if pattern.search(x.get("name", "").split("/")[-1])]
+          def norm(value):
+              return re.sub(r"[^A-Z0-9]", "", value.upper())
+          candidates = [x for x in items if x.get("name", "").lower().endswith(".xlsb")
+                        and "LISTA" in norm(x.get("name", "").split("/")[-1])
+                        and "PRECIO" in norm(x.get("name", "").split("/")[-1])]
+          matches = [x for x in candidates if "14102026" in norm(x.get("name", "").split("/")[-1])]
           if len(matches) != 1:
-              raise SystemExit(f"Expected exactly one original 14-10-2026 XLSB in Blob; found {len(matches)}")
+              candidate_names = [x.get("name", "") for x in candidates]
+              message = "Expected one original 14-10-2026 XLSB; found " + str(len(matches)) + "; candidates=" + str(candidate_names)
+              with open(sys.argv[3], "a", encoding="utf-8") as f:
+                  f.write("source_error=" + message.replace("\n", " ") + "\n")
+              raise SystemExit(message)
           with open(sys.argv[2], "w", encoding="utf-8") as f:
               json.dump(matches[0], f)
           print("selected_blob=" + matches[0]["name"])
@@ -115,6 +122,7 @@ jobs:
           SOURCE_OUTCOME: ${{ steps.source.outcome }}
           DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
           SOURCE_FILE: ${{ steps.source.outputs.name }}
+          SOURCE_ERROR: ${{ steps.source.outputs.source_error }}
           IMPORT_EXIT: ${{ steps.import.outputs.exit_code }}
           PARITY_EXIT: ${{ steps.parity.outputs.exit_code }}
         shell: bash
@@ -129,6 +137,7 @@ jobs:
             echo "- Blob source step: ${SOURCE_OUTCOME:-not-run}"
             echo "- Runtime dependencies: ${DEPENDENCIES_OUTCOME:-not-run}"
             echo "- Source file: ${SOURCE_FILE:-unavailable}"
+            echo "- Blob selection error: ${SOURCE_ERROR:-none}"
             echo "- Import exit code: ${IMPORT_EXIT:-not-run}"
             echo "- Neon parity exit code: ${PARITY_EXIT:-not-run}"
             if [[ -f "$RUNNER_TEMP/pricing-import-success.json" ]]; then
