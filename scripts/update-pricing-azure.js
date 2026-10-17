@@ -80,6 +80,22 @@ const pricingAfterImport = {
   ...afterPricingResult.rows[0],
   dongfeng_007_008: afterDongfengResult.rows,
 };
+const parityRowsResult = await pool.query(
+  `SELECT pv.marca,pv.modelo,COALESCE(pv.version_raw,pv.version) AS version,
+          ph.vigencia_desde::text AS vigencia_desde,ph.source_sheet,ph.source_row::text AS source_row,
+          ph.precio_neto::text AS precio_neto,ph.precio_lista::text AS precio_lista,
+          ph.precio_con_iva::text AS precio_con_iva,ph.bono_cidef::text AS bono_cidef,
+          ph.bono_forum::text AS bono_forum,ph.bono_mes::text AS bono_mes,
+          ph.precio_efectivo_pre_mes_sin_iva::text AS precio_efectivo_pre_mes_sin_iva,
+          ph.precio_efectivo_pre_mes_con_iva::text AS precio_efectivo_pre_mes_con_iva,
+          ph.precio_efectivo_final_sin_iva::text AS precio_efectivo_final_sin_iva,
+          ph.precio_efectivo_final_con_iva::text AS precio_efectivo_final_con_iva
+     FROM price_history ph
+     JOIN price_versions pv USING(price_version_id)
+    WHERE ph.vigencia_desde=$1::date AND ph.source_file=$2
+    ORDER BY pv.marca,pv.modelo,COALESCE(pv.version_raw,pv.version),ph.source_sheet,ph.source_row`,
+  [expectedDate,sourceFile],
+);
 console.log(JSON.stringify({
   stage:'price_history_import_committed',
   source_file:sourceFile,
@@ -90,7 +106,11 @@ console.log(JSON.stringify({
   rows_normalized:importResult.rowsNormalized,
   price_versions_touched:importResult.versionsTouched,
   price_history_inserted:importResult.historyInserted,
+  azure_parity_rows:parityRowsResult.rows,
 },null,2));
+console.log('AZURE_PRICING_PARITY_JSON_BEGIN');
+console.log(JSON.stringify(parityRowsResult.rows));
+console.log('AZURE_PRICING_PARITY_JSON_END');
 const masterText = (value) => String(value ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
 const normalizeProductText = (value) => String(value ?? '')
   .normalize('NFD')
