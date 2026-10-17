@@ -1,10 +1,10 @@
 # Azure pricing update
 
-- Commit: a1545fab2024fae4706522bf134a7c8149e987fd
+- Commit: c0bfad35ff5f237de238aa5f0ded82529e277621
 - Azure login: success
-- Blob source step: failure
+- Blob source step: success
 - Runtime dependencies: success
-- Source file: unavailable
-- Blob selection error: Expected one original 14-10-2026 XLSB; found 0; candidates=['precios/LISTA DE PRECIOS OCTUBRE 01-10-2026.xlsb']
+- Source file: LISTA DE PRECIOS OCTUBRE 14-10-2026.xlsb
+- Blob selection error: none
 - Import exit code: 1
 - Neon parity exit code: not-run
