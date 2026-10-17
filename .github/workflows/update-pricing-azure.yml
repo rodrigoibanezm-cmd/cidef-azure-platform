@@ -1,5 +1,9 @@
 name: Update Azure pricing from Blob
 
+concurrency:
+  group: azure-pricing-import
+  cancel-in-progress: false
+
 on:
   push:
     branches: [main]
