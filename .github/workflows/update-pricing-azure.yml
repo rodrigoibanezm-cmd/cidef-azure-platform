@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Azure login via OIDC
+        id: azure_login
+        continue-on-error: true
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -34,6 +36,7 @@ jobs:
 
       - name: Find and download the certified source XLSB from Azure Blob
         id: source
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -70,6 +73,8 @@ jobs:
           echo "name=$FILE_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Install only workbook and PostgreSQL runtime dependencies
+        id: dependencies
+        continue-on-error: true
         run: npm install --no-save --no-package-lock --ignore-scripts xlsx@0.18.5 pg@8.16.3
 
       - name: Import append-only price history and add canonical product identities
@@ -106,6 +111,9 @@ jobs:
       - name: Publish verification summary
         if: always()
         env:
+          AZURE_LOGIN_OUTCOME: ${{ steps.azure_login.outcome }}
+          SOURCE_OUTCOME: ${{ steps.source.outcome }}
+          DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
           SOURCE_FILE: ${{ steps.source.outputs.name }}
           IMPORT_EXIT: ${{ steps.import.outputs.exit_code }}
           PARITY_EXIT: ${{ steps.parity.outputs.exit_code }}
@@ -117,6 +125,9 @@ jobs:
             echo "# Azure pricing update"
             echo
             echo "- Commit: $GITHUB_SHA"
+            echo "- Azure login: ${AZURE_LOGIN_OUTCOME:-not-run}"
+            echo "- Blob source step: ${SOURCE_OUTCOME:-not-run}"
+            echo "- Runtime dependencies: ${DEPENDENCIES_OUTCOME:-not-run}"
             echo "- Source file: ${SOURCE_FILE:-unavailable}"
             echo "- Import exit code: ${IMPORT_EXIT:-not-run}"
             echo "- Neon parity exit code: ${PARITY_EXIT:-not-run}"
