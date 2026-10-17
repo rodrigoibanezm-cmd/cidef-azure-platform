@@ -1,0 +1,29 @@
+name: Validate Azure PostgreSQL adapter
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: Production
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install PostgreSQL driver
+        run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
+
+      - name: Run read-only Azure adapter checks
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: node scripts/validate-azure-postgres-adapter.js
