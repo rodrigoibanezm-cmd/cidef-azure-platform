@@ -287,7 +287,24 @@ console.log(JSON.stringify({
 
 let canonicalizer;
 try {
-  canonicalizer = await priceEpisodeCanonicalizerV01({ dry_run: false });
+  const targetTables = (await pool.query(
+    `SELECT to_regclass('public.price_episode_vin_v01') AS vin_table,
+            to_regclass('public.price_episode_canonico_v01') AS episode_table`,
+  )).rows[0];
+  const missingTables = [
+    !targetTables.vin_table && 'public.price_episode_vin_v01',
+    !targetTables.episode_table && 'public.price_episode_canonico_v01',
+  ].filter(Boolean);
+  canonicalizer = await priceEpisodeCanonicalizerV01({ dry_run: missingTables.length > 0 });
+  if (canonicalizer.price_versions?.unresolved > 0) {
+    throw new Error(`Azure pricing canonicalization unresolved price_versions=${canonicalizer.unresolved_price_version_ids?.join(',')}`);
+  }
+  canonicalizer = {
+    ...canonicalizer,
+    materialization: missingTables.length
+      ? { status:'blocked_missing_tables', missing:missingTables }
+      : { status:'completed' },
+  };
 } finally {
   await closeAzurePool();
 }
