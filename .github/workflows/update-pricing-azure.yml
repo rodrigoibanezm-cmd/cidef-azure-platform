@@ -1,0 +1,82 @@
+name: Update Azure pricing from Blob
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/pricing/**'
+      - 'scripts/update-pricing-azure.js'
+      - 'scripts/compare-pricing-neon-azure.js'
+      - '.github/workflows/update-pricing-azure.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Find and download the certified source XLSB from Azure Blob
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK_DIR="$RUNNER_TEMP/azure-pricing"
+          mkdir -p "$WORK_DIR"
+          az storage blob list \
+            --account-name cidefprodstorage \
+            --container-name cidef \
+            --auth-mode key \
+            --prefix precios/ \
+            --output json > "$WORK_DIR/blob-list.json"
+          python3 - "$WORK_DIR/blob-list.json" "$WORK_DIR/selected.json" <<'PY'
+          import json, re, sys
+          items = json.load(open(sys.argv[1], encoding="utf-8"))
+          pattern = re.compile(r"LISTA.*PRECIOS.*14[-_ ]?10[-_ ]?2026.*\.xlsb$", re.I)
+          matches = [x for x in items if pattern.search(x.get("name", "").split("/")[-1])]
+          if len(matches) != 1:
+              raise SystemExit(f"Expected exactly one original 14-10-2026 XLSB in Blob; found {len(matches)}")
+          with open(sys.argv[2], "w", encoding="utf-8") as f:
+              json.dump(matches[0], f)
+          print("selected_blob=" + matches[0]["name"])
+          PY
+          BLOB_NAME=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$WORK_DIR/selected.json")
+          FILE_NAME="${BLOB_NAME##*/}"
+          az storage blob download \
+            --account-name cidefprodstorage \
+            --container-name cidef \
+            --auth-mode key \
+            --name "$BLOB_NAME" \
+            --file "$WORK_DIR/$FILE_NAME" \
+            --only-show-errors \
+            --output none
+          echo "path=$WORK_DIR/$FILE_NAME" >> "$GITHUB_OUTPUT"
+          echo "name=$FILE_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Install only workbook and PostgreSQL runtime dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts xlsx@0.18.5 pg@8.16.3
+
+      - name: Import append-only price history and add canonical product identities
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+          PRICE_SOURCE_FILE: ${{ steps.source.outputs.name }}
+        run: node scripts/update-pricing-azure.js "${{ steps.source.outputs.path }}"
+
+      - name: Verify October 14 parity with Neon (read only)
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          PRICE_SOURCE_FILE: ${{ steps.source.outputs.name }}
+        run: node scripts/compare-pricing-neon-azure.js
