@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { getAzurePool } from "../lib/azure-postgres.js";
 import { ventasMonthlyActualV01 } from "../lib/motors/ventas-monthly-actual-v01.js";
+import { pricingHistoryV01 } from "../lib/motors/pricing-history-v01.js";
 import { describeRvm, inspectRvm, fetchRvm, observeRvmEvidence } from "../lib/data-floor/rvmCertifier.js";
 import { describeCrm, inspectCrm, observeCrmEvidence } from "../lib/data-floor/crmCertifier.js";
 import { describeForum, inspectForum, fetchForum, observeForumEvidence } from "../lib/data-floor/forumCertifier.js";
@@ -140,6 +141,28 @@ function makeServer(principal) {
     });
   }
   if (principal.permissions.read) {
+    server.registerTool("pricing_history_v01", {
+      description: "Return certified CIDEF pricing history and assigned VINs from Azure PostgreSQL using the original PRICING P1 contract.",
+      inputSchema: z.object({
+        brand: z.string().optional(),
+        model: z.string().optional(),
+        version: z.string().optional(),
+        version_id: z.number().int().optional(),
+        date_from: z.string().optional(),
+        date_to: z.string().optional(),
+        include_conflicts: z.boolean().optional(),
+        price_episode_id: z.number().int().optional(),
+      }).strict()
+    }, async (input) => {
+      try {
+        const result = await pricingHistoryV01(input);
+        audit({ action: "mcp.tool", tool: "pricing_history_v01", subject: principal.subject, status: "success" });
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        audit({ action: "mcp.tool", tool: "pricing_history_v01", subject: principal.subject, status: "error" });
+        return { isError: true, content: [{ type: "text", text: error.message }] };
+      }
+    });
     server.registerTool("ventas_monthly_actual_v01", {
       description: "Return certified CIDEF monthly sales for a target month, using the original SALES engine contract and Azure PostgreSQL.",
       inputSchema: {
