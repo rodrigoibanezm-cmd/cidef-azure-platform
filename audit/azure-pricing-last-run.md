@@ -1,6 +1,6 @@
 # Azure pricing update
 
-- Commit: d6848bdf175f42c3c97e5aee06d37d192f3d8998
+- Commit: cd80a5cfff22774747ba09e5cf8cd0e880bf8a38
 - Azure login: success
 - Blob source step: success
 - Runtime dependencies: success
