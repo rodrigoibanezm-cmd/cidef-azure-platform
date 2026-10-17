@@ -1,4 +1,4 @@
-import { workbookToSheetJson } from './pricing/workbookToSheetJson.js';
+import { workbookToSheetJson } from './workbookToSheetJson.js';
 
 const clean = (v, i) => {
   const s = String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
