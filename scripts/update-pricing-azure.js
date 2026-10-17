@@ -56,6 +56,40 @@ const pricingPresentBefore = {
 };
 
 const importResult = await importPrices({ workbook_files: [{ name: sourceFile, path: inputPath }] });
+const afterPricingResult = await pool.query(
+  `SELECT COUNT(*)::int AS history_rows,
+          COUNT(DISTINCT price_version_id)::int AS versions,
+          COUNT(DISTINCT (price_version_id, source_sheet, source_row))::int AS source_rows
+     FROM price_history
+    WHERE source_file=$1 AND vigencia_desde=$2::date`,
+  [sourceFile, expectedDate],
+);
+const afterDongfengResult = await pool.query(
+  `SELECT pv.modelo,COALESCE(pv.version_raw,pv.version) AS version,
+          ph.precio_lista,ph.bono_forum,ph.precio_efectivo_final_sin_iva,
+          ph.source_sheet,ph.source_row
+     FROM price_history ph
+     JOIN price_versions pv USING(price_version_id)
+    WHERE ph.source_file=$1 AND ph.vigencia_desde=$2::date
+      AND pv.marca='DONGFENG' AND pv.modelo IN ('007','008')
+    ORDER BY pv.modelo,ph.source_sheet,ph.source_row`,
+  [sourceFile, expectedDate],
+);
+const pricingAfterImport = {
+  ...afterPricingResult.rows[0],
+  dongfeng_007_008: afterDongfengResult.rows,
+};
+console.log(JSON.stringify({
+  stage:'price_history_import_committed',
+  source_file:sourceFile,
+  vigencia:expectedDate,
+  pricing_present_before:pricingPresentBefore,
+  pricing_after_import:pricingAfterImport,
+  rows_staged:importResult.rowsStaged,
+  rows_normalized:importResult.rowsNormalized,
+  price_versions_touched:importResult.versionsTouched,
+  price_history_inserted:importResult.historyInserted,
+},null,2));
 const masterText = (value) => String(value ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
 const uniqueProducts = new Map();
 for (const item of current) uniqueProducts.set([item.marca, item.modelo, item.version].join('|'), item);
@@ -63,6 +97,7 @@ for (const item of current) uniqueProducts.set([item.marca, item.modelo, item.ve
 const client = await pool.connect();
 const inserted = { brands: 0, models: 0, versions: 0, aliases: 0 };
 const canonicalVersionReuses = [];
+const aliasCorrections = [];
 const productIds = [];
 try {
   await client.query('BEGIN');
@@ -122,12 +157,46 @@ try {
       });
     }
     const aliases = (await client.query(
-      `SELECT alias_id,version_id,estado FROM producto_aliases_v01
-       WHERE fuente='lista_precios' AND nivel='VERSION'
-         AND contexto_marca_raw=$1 AND contexto_modelo_raw=$2 AND valor_raw=$3`,
+      `SELECT pa.alias_id,pa.version_id,pa.estado,
+              vm.modelo_id AS mapped_modelo_id,vm.nombre_canonico AS mapped_version
+         FROM producto_aliases_v01 pa
+         LEFT JOIN versiones_master_v01 vm ON vm.version_id=pa.version_id
+        WHERE pa.fuente='lista_precios' AND pa.nivel='VERSION'
+          AND pa.contexto_marca_raw=$1 AND pa.contexto_modelo_raw=$2 AND pa.valor_raw=$3
+        ORDER BY pa.alias_id`,
       [item.marca,item.modelo,item.version_raw ?? item.version])).rows;
-    if (aliases.length > 1 || (aliases.length === 1 && aliases[0].version_id != null && String(aliases[0].version_id) !== String(versionId))) {
-      throw new Error(`Conflicting price alias: ${item.marca}/${item.modelo}/${item.version}`);
+    const aliasesMappedToCanonical = aliases.every((alias) =>
+      String(alias.version_id ?? '') === String(versionId)
+      && String(alias.mapped_modelo_id ?? '') === String(modeloId)
+      && masterText(alias.mapped_version) === masterText(canonicalVersion));
+    if (aliases.length && !aliasesMappedToCanonical) {
+      const exactRequestedIdentity =
+        item.marca === 'FOTON'
+        && item.modelo === 'G7 LITE'
+        && masterText(item.version) === '4X2 EURO VI'
+        && masterText(canonicalVersion) === '4X2 EURO VI';
+      if (!exactRequestedIdentity) {
+        const mapped = aliases.map((alias) => ({
+          alias_id:alias.alias_id,version_id:alias.version_id,
+          mapped_modelo_id:alias.mapped_modelo_id,mapped_version:alias.mapped_version,
+        }));
+        throw new Error(`Ambiguous price alias ${item.marca}/${item.modelo}/${item.version}: ${JSON.stringify(mapped)}`);
+      }
+      for (const alias of aliases) {
+        await client.query(
+          `UPDATE producto_aliases_v01
+              SET valor_normalizado=$1,marca_id=$2,modelo_id=$3,version_id=$4,
+                  evidencia_tipo='PRICE_VERSION_EXACT',evidencia_count=1,
+                  estado='RESUELTO',updated_at=now()
+            WHERE alias_id=$5`,
+          [masterText(item.version_raw ?? item.version),marcaId,modeloId,versionId,alias.alias_id],
+        );
+        aliasCorrections.push({
+          alias_id:alias.alias_id,previous_version_id:alias.version_id,
+          previous_modelo_id:alias.mapped_modelo_id,previous_version:alias.mapped_version,
+          canonical_version_id:versionId,canonical_version:canonicalVersion,
+        });
+      }
     }
     if (!aliases.length) {
       await client.query(
@@ -168,6 +237,7 @@ console.log(JSON.stringify({
   price_history_inserted:importResult.historyInserted,
   masters_added:inserted,
   canonical_version_reuses:canonicalVersionReuses,
+  alias_corrections:aliasCorrections,
   dongfeng_products:productIds,
   audit:{blockingRejectedRows:audit.blockingRejectedRows,rowsWithoutDeclaredVigencia:audit.rowsWithoutDeclaredVigencia}
 },null,2));
