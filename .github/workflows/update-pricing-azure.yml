@@ -10,7 +10,7 @@ on:
       - '.github/workflows/update-pricing-azure.yml'
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
@@ -69,14 +69,76 @@ jobs:
         run: npm install --no-save --no-package-lock --ignore-scripts xlsx@0.18.5 pg@8.16.3
 
       - name: Import append-only price history and add canonical product identities
+        id: import
+        continue-on-error: true
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
-          PRICE_SOURCE_FILE: ${{ steps.source.outputs.name }}
-        run: node scripts/update-pricing-azure.js "${{ steps.source.outputs.path }}"
+        shell: bash
+        run: |
+          set +e
+          node scripts/update-pricing-azure.js "${{ steps.source.outputs.path }}" > "$RUNNER_TEMP/pricing-import.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/pricing-import.log"
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          if [[ "$status" -eq 0 ]]; then cp "$RUNNER_TEMP/pricing-import.log" "$RUNNER_TEMP/pricing-import-success.json"; fi
 
       - name: Verify October 14 parity with Neon (read only)
+        id: parity
+        if: steps.import.outputs.exit_code == '0'
+        continue-on-error: true
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           PRICE_SOURCE_FILE: ${{ steps.source.outputs.name }}
-        run: node scripts/compare-pricing-neon-azure.js
+        shell: bash
+        run: |
+          set +e
+          node scripts/compare-pricing-neon-azure.js > "$RUNNER_TEMP/pricing-parity.log" 2>&1
+          status=$?
+          cat "$RUNNER_TEMP/pricing-parity.log"
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          if [[ "$status" -eq 0 ]]; then cp "$RUNNER_TEMP/pricing-parity.log" "$RUNNER_TEMP/pricing-parity-success.json"; fi
+
+      - name: Publish verification summary
+        if: always()
+        env:
+          SOURCE_FILE: ${{ steps.source.outputs.name }}
+          IMPORT_EXIT: ${{ steps.import.outputs.exit_code }}
+          PARITY_EXIT: ${{ steps.parity.outputs.exit_code }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT=audit/azure-pricing-last-run.md
+          {
+            echo "# Azure pricing update"
+            echo
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Source file: ${SOURCE_FILE:-unavailable}"
+            echo "- Import exit code: ${IMPORT_EXIT:-not-run}"
+            echo "- Neon parity exit code: ${PARITY_EXIT:-not-run}"
+            if [[ -f "$RUNNER_TEMP/pricing-import-success.json" ]]; then
+              echo
+              echo "## Import summary"
+              echo '~~~json'
+              cat "$RUNNER_TEMP/pricing-import-success.json"
+              echo '~~~'
+            fi
+            if [[ -f "$RUNNER_TEMP/pricing-parity-success.json" ]]; then
+              echo
+              echo "## Parity summary"
+              echo '~~~json'
+              cat "$RUNNER_TEMP/pricing-parity-success.json"
+              echo '~~~'
+            fi
+          } > "$REPORT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+users.noreply.github.com"
+          git add "$REPORT"
+          if ! git diff --cached --quiet; then
+            git commit -m "audit: record Azure pricing update result"
+            git push
+          fi
+          if [[ "${IMPORT_EXIT:-}" != "0" || "${PARITY_EXIT:-}" != "0" ]]; then
+            echo "::error::Azure pricing import or Neon parity check failed; see workflow logs and $REPORT"
+            exit 1
+          fi
