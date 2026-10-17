@@ -1,6 +1,9 @@
 # Azure pricing update
 
-- Commit: dd3cc45d52773cc0b5b56e2318a85a7499f9516b
+- Commit: e70f21fcfd5953dd98003912e06bd3935134ff26
+- Azure login: success
+- Blob source step: failure
+- Runtime dependencies: success
 - Source file: unavailable
-- Import exit code: not-run
+- Import exit code: 1
 - Neon parity exit code: not-run
