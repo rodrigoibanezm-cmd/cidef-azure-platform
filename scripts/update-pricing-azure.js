@@ -2,7 +2,8 @@ import path from 'node:path';
 import { parsePriceWorkbook } from './pricing/price-list.js';
 import { normalizePriceRecord } from './pricing/price-normalizer.js';
 import { run as importPrices, auditNormalizedRecords } from './pricing/import-lista-precios-azure.js';
-import { getAzurePool } from '../lib/azure-postgres.js';
+import { priceEpisodeCanonicalizerV01 } from './pricing/price-episode-canonicalizer-v01.js';
+import { closeAzurePool, getAzurePool } from '../lib/azure-postgres.js';
 
 const expectedDate = '2026-10-14';
 const inputPath = process.argv[2];
@@ -91,6 +92,11 @@ console.log(JSON.stringify({
   price_history_inserted:importResult.historyInserted,
 },null,2));
 const masterText = (value) => String(value ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+const normalizeProductText = (value) => String(value ?? '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toUpperCase()
+  .replace(/[^A-Z0-9]/g, '');
 const uniqueProducts = new Map();
 for (const item of current) uniqueProducts.set([item.marca, item.modelo, item.version].join('|'), item);
 
@@ -98,105 +104,132 @@ const client = await pool.connect();
 const inserted = { brands: 0, models: 0, versions: 0, aliases: 0 };
 const canonicalVersionReuses = [];
 const aliasCorrections = [];
+const aliasResolutions = [];
 const productIds = [];
 try {
   await client.query('BEGIN');
+  const aliasRows = (await client.query(
+    `SELECT pa.alias_id,pa.version_id,pa.estado,pa.valor_raw,
+            pa.contexto_marca_raw,pa.contexto_modelo_raw,
+            vm.modelo_id AS mapped_modelo_id,mo.marca_id AS mapped_marca_id,
+            vm.nombre_canonico AS mapped_version
+       FROM producto_aliases_v01 pa
+       LEFT JOIN versiones_master_v01 vm ON vm.version_id=pa.version_id
+       LEFT JOIN modelos_master_v01 mo ON mo.modelo_id=vm.modelo_id
+      WHERE pa.fuente='lista_precios' AND pa.nivel='VERSION'`,
+  )).rows;
+  const masterRows = (await client.query(
+    `SELECT v.version_id,v.nombre_canonico AS version_canonica,v.nombre_normalizado AS version_normalizada,
+            mo.modelo_id,mo.nombre_canonico AS modelo_canonico,mo.nombre_normalizado AS modelo_normalizado,
+            ma.marca_id,ma.nombre_canonico AS marca_canonica,ma.nombre_normalizado AS marca_normalizada
+       FROM versiones_master_v01 v
+       JOIN modelos_master_v01 mo ON mo.modelo_id=v.modelo_id
+       JOIN marcas_master_v01 ma ON ma.marca_id=mo.marca_id`,
+  )).rows;
   for (const item of uniqueProducts.values()) {
     const marca = masterText(item.marca);
     const modelo = masterText(item.modelo);
     const version = masterText(item.version);
-    await client.query(
-      `INSERT INTO marcas_master_v01 (nombre_canonico,nombre_normalizado)
-       VALUES ($1,$2) ON CONFLICT (nombre_normalizado) DO NOTHING`, [item.marca, marca]);
-    const brand = (await client.query(
-      `SELECT marca_id,nombre_canonico FROM marcas_master_v01 WHERE nombre_normalizado=$1`, [marca])).rows;
-    if (brand.length !== 1 || brand[0].nombre_canonico !== item.marca) {
-      throw new Error(`Conflicting canonical brand identity: ${item.marca}`);
+    const inputAliasKey = [
+      normalizeProductText(item.marca),
+      normalizeProductText(item.modelo),
+      normalizeProductText(item.version_raw ?? item.version),
+    ].join('|');
+    const aliases = aliasRows.filter((alias) => [
+      normalizeProductText(alias.contexto_marca_raw),
+      normalizeProductText(alias.contexto_modelo_raw),
+      normalizeProductText(alias.valor_raw),
+    ].join('|') === inputAliasKey);
+    const resolvedTargets = [...new Set(aliases
+      .filter((alias) => String(alias.estado).toUpperCase() === 'RESUELTO' && alias.version_id != null)
+      .map((alias) => String(alias.version_id)))];
+    if (resolvedTargets.length > 1) {
+      throw new Error(`Ambiguous price alias ${item.marca}/${item.modelo}/${item.version}: ${resolvedTargets.join(',')}`);
     }
-    const marcaId = brand[0].marca_id;
 
-    const modelBefore = (await client.query(
-      `SELECT modelo_id,nombre_canonico FROM modelos_master_v01 WHERE marca_id=$1 AND nombre_normalizado=$2`,
-      [marcaId, modelo])).rows;
-    if (!modelBefore.length) inserted.models++;
-    await client.query(
-      `INSERT INTO modelos_master_v01 (marca_id,nombre_canonico,nombre_normalizado)
-       VALUES ($1,$2,$3) ON CONFLICT (marca_id,nombre_normalizado) DO NOTHING`,
-      [marcaId, item.modelo, modelo]);
-    const model = (await client.query(
-      `SELECT modelo_id,nombre_canonico FROM modelos_master_v01 WHERE marca_id=$1 AND nombre_normalizado=$2`,
-      [marcaId, modelo])).rows;
-    if (model.length !== 1 || model[0].nombre_canonico !== item.modelo) {
-      throw new Error(`Conflicting canonical model identity: ${item.marca}/${item.modelo}`);
+    let marcaId;
+    let modeloId;
+    let versionId;
+    let canonicalVersion;
+    const exactMasterKey = [
+      normalizeProductText(item.marca),normalizeProductText(item.modelo),normalizeProductText(item.version),
+    ].join('|');
+    const exactMasterCandidates = masterRows.filter((row) => [
+      normalizeProductText(row.marca_canonica ?? row.marca_normalizada),
+      normalizeProductText(row.modelo_canonico ?? row.modelo_normalizado),
+      normalizeProductText(row.version_canonica ?? row.version_normalizada),
+    ].join('|') === exactMasterKey);
+    if (!resolvedTargets.length && exactMasterCandidates.length > 1) {
+      throw new Error(`Ambiguous exact product master ${item.marca}/${item.modelo}/${item.version}: ${exactMasterCandidates.map((row) => row.version_id).join(',')}`);
     }
-    const modeloId = model[0].modelo_id;
+    if (resolvedTargets.length === 1) {
+      const target = aliases.find((alias) => String(alias.version_id) === resolvedTargets[0]);
+      if (target.mapped_modelo_id == null || target.mapped_marca_id == null || !target.mapped_version) {
+        throw new Error(`Resolved price alias points to missing master identity: ${item.marca}/${item.modelo}/${item.version}`);
+      }
+      marcaId = target.mapped_marca_id;
+      modeloId = target.mapped_modelo_id;
+      versionId = target.version_id;
+      canonicalVersion = target.mapped_version;
+      aliasResolutions.push({
+        marca:item.marca,modelo:item.modelo,version:item.version,
+        alias_id:target.alias_id,version_id:versionId,canonical_version:canonicalVersion,
+      });
+    } else if (exactMasterCandidates.length === 1) {
+      const identity = exactMasterCandidates[0];
+      marcaId = identity.marca_id;
+      modeloId = identity.modelo_id;
+      versionId = identity.version_id;
+      canonicalVersion = identity.version_canonica;
+    } else {
+      await client.query(
+        `INSERT INTO marcas_master_v01 (nombre_canonico,nombre_normalizado)
+         VALUES ($1,$2) ON CONFLICT (nombre_normalizado) DO NOTHING`, [item.marca, marca]);
+      const brand = (await client.query(
+        `SELECT marca_id,nombre_canonico FROM marcas_master_v01 WHERE nombre_normalizado=$1`, [marca])).rows;
+      if (brand.length !== 1 || brand[0].nombre_canonico !== item.marca) {
+        throw new Error(`Conflicting canonical brand identity: ${item.marca}`);
+      }
+      marcaId = brand[0].marca_id;
 
-    const versionBefore = (await client.query(
-      `SELECT version_id,nombre_canonico FROM versiones_master_v01 WHERE modelo_id=$1 AND nombre_normalizado=$2`,
-      [modeloId, version])).rows;
-    if (!versionBefore.length) inserted.versions++;
-    await client.query(
-      `INSERT INTO versiones_master_v01 (modelo_id,nombre_canonico,nombre_normalizado)
-       VALUES ($1,$2,$3) ON CONFLICT (modelo_id,nombre_normalizado) DO NOTHING`,
-      [modeloId, item.version, version]);
-    const versionRows = (await client.query(
-      `SELECT version_id,nombre_canonico FROM versiones_master_v01 WHERE modelo_id=$1 AND nombre_normalizado=$2`,
-      [modeloId, version])).rows;
-    if (versionRows.length !== 1) {
-      throw new Error(`Conflicting canonical version identity: ${item.marca}/${item.modelo}/${item.version}`);
+      const modelBefore = (await client.query(
+        `SELECT modelo_id,nombre_canonico FROM modelos_master_v01 WHERE marca_id=$1 AND nombre_normalizado=$2`,
+        [marcaId, modelo])).rows;
+      if (!modelBefore.length) inserted.models++;
+      await client.query(
+        `INSERT INTO modelos_master_v01 (marca_id,nombre_canonico,nombre_normalizado)
+         VALUES ($1,$2,$3) ON CONFLICT (marca_id,nombre_normalizado) DO NOTHING`,
+        [marcaId, item.modelo, modelo]);
+      const model = (await client.query(
+        `SELECT modelo_id,nombre_canonico FROM modelos_master_v01 WHERE marca_id=$1 AND nombre_normalizado=$2`,
+        [marcaId, modelo])).rows;
+      if (model.length !== 1 || model[0].nombre_canonico !== item.modelo) {
+        throw new Error(`Conflicting canonical model identity: ${item.marca}/${item.modelo}`);
+      }
+      modeloId = model[0].modelo_id;
+
+      const versionBefore = (await client.query(
+        `SELECT version_id,nombre_canonico FROM versiones_master_v01 WHERE modelo_id=$1 AND nombre_normalizado=$2`,
+        [modeloId, version])).rows;
+      if (!versionBefore.length) inserted.versions++;
+      await client.query(
+        `INSERT INTO versiones_master_v01 (modelo_id,nombre_canonico,nombre_normalizado)
+         VALUES ($1,$2,$3) ON CONFLICT (modelo_id,nombre_normalizado) DO NOTHING`,
+        [modeloId, item.version, version]);
+      const versionRows = (await client.query(
+        `SELECT version_id,nombre_canonico FROM versiones_master_v01 WHERE modelo_id=$1 AND nombre_normalizado=$2`,
+        [modeloId, version])).rows;
+      if (versionRows.length !== 1) {
+        throw new Error(`Conflicting canonical version identity: ${item.marca}/${item.modelo}/${item.version}`);
+      }
+      canonicalVersion = versionRows[0].nombre_canonico;
+      versionId = versionRows[0].version_id;
     }
-    const canonicalVersion = versionRows[0].nombre_canonico;
-    if (masterText(canonicalVersion) !== masterText(item.version)) {
-      throw new Error(`Conflicting canonical version identity: ${item.marca}/${item.modelo}/${item.version} (existing: ${canonicalVersion})`);
-    }
-    const versionId = versionRows[0].version_id;
     if (canonicalVersion !== item.version) {
       canonicalVersionReuses.push({
         marca:item.marca,modelo:item.modelo,received:item.version,
         canonical:canonicalVersion,version_id:versionId,
       });
-    }
-    const aliases = (await client.query(
-      `SELECT pa.alias_id,pa.version_id,pa.estado,
-              vm.modelo_id AS mapped_modelo_id,vm.nombre_canonico AS mapped_version
-         FROM producto_aliases_v01 pa
-         LEFT JOIN versiones_master_v01 vm ON vm.version_id=pa.version_id
-        WHERE pa.fuente='lista_precios' AND pa.nivel='VERSION'
-          AND pa.contexto_marca_raw=$1 AND pa.contexto_modelo_raw=$2 AND pa.valor_raw=$3
-        ORDER BY pa.alias_id`,
-      [item.marca,item.modelo,item.version_raw ?? item.version])).rows;
-    const aliasesMappedToCanonical = aliases.every((alias) =>
-      String(alias.version_id ?? '') === String(versionId)
-      && String(alias.mapped_modelo_id ?? '') === String(modeloId)
-      && masterText(alias.mapped_version) === masterText(canonicalVersion));
-    if (aliases.length && !aliasesMappedToCanonical) {
-      const exactRequestedIdentity =
-        item.marca === 'FOTON'
-        && item.modelo === 'G7 LITE'
-        && masterText(item.version) === '4X2 EURO VI'
-        && masterText(canonicalVersion) === '4X2 EURO VI';
-      if (!exactRequestedIdentity) {
-        const mapped = aliases.map((alias) => ({
-          alias_id:alias.alias_id,version_id:alias.version_id,
-          mapped_modelo_id:alias.mapped_modelo_id,mapped_version:alias.mapped_version,
-        }));
-        throw new Error(`Ambiguous price alias ${item.marca}/${item.modelo}/${item.version}: ${JSON.stringify(mapped)}`);
-      }
-      for (const alias of aliases) {
-        await client.query(
-          `UPDATE producto_aliases_v01
-              SET valor_normalizado=$1,marca_id=$2,modelo_id=$3,version_id=$4,
-                  evidencia_tipo='PRICE_VERSION_EXACT',evidencia_count=1,
-                  estado='RESUELTO',updated_at=now()
-            WHERE alias_id=$5`,
-          [masterText(item.version_raw ?? item.version),marcaId,modeloId,versionId,alias.alias_id],
-        );
-        aliasCorrections.push({
-          alias_id:alias.alias_id,previous_version_id:alias.version_id,
-          previous_modelo_id:alias.mapped_modelo_id,previous_version:alias.mapped_version,
-          canonical_version_id:versionId,canonical_version:canonicalVersion,
-        });
-      }
     }
     if (!aliases.length) {
       await client.query(
@@ -208,12 +241,22 @@ try {
         [item.version_raw ?? item.version, masterText(item.version_raw ?? item.version),
          item.marca,item.modelo,marcaId,modeloId,versionId,item.vigencia_desde]);
       inserted.aliases++;
-    } else if (aliases[0].version_id == null || aliases[0].estado !== 'RESUELTO') {
-      await client.query(
-        `UPDATE producto_aliases_v01 SET valor_normalizado=$1,marca_id=$2,modelo_id=$3,version_id=$4,
-          evidencia_tipo='PRICE_VERSION_EXACT',evidencia_count=1,primera_observacion=$5,
-          ultima_observacion=$5,estado='RESUELTO',updated_at=now() WHERE alias_id=$6`,
-        [masterText(item.version_raw ?? item.version),marcaId,modeloId,versionId,item.vigencia_desde,aliases[0].alias_id]);
+    } else {
+      for (const alias of aliases.filter((row) =>
+        String(row.estado).toUpperCase() !== 'RESUELTO' || String(row.version_id ?? '') !== String(versionId))) {
+        if (String(alias.estado).toUpperCase() === 'RESUELTO' && alias.version_id != null) {
+          throw new Error(`Resolved price alias target changed during resolution: alias_id=${alias.alias_id}`);
+        }
+        await client.query(
+          `UPDATE producto_aliases_v01 SET valor_normalizado=$1,marca_id=$2,modelo_id=$3,version_id=$4,
+            evidencia_tipo='PRICE_VERSION_EXACT',evidencia_count=1,primera_observacion=COALESCE(primera_observacion,$5),
+            ultima_observacion=$5,estado='RESUELTO',updated_at=now() WHERE alias_id=$6`,
+          [masterText(item.version_raw ?? item.version),marcaId,modeloId,versionId,item.vigencia_desde,alias.alias_id]);
+        aliasCorrections.push({
+          alias_id:alias.alias_id,previous_version_id:alias.version_id,
+          canonical_version_id:versionId,canonical_version:canonicalVersion,
+        });
+      }
     }
     if (item.marca === 'DONGFENG' && ['007','008'].includes(item.modelo)) {
       productIds.push({ marca:item.marca,modelo:item.modelo,version:item.version,marca_id:marcaId,modelo_id:modeloId,version_id:versionId });
@@ -241,3 +284,11 @@ console.log(JSON.stringify({
   dongfeng_products:productIds,
   audit:{blockingRejectedRows:audit.blockingRejectedRows,rowsWithoutDeclaredVigencia:audit.rowsWithoutDeclaredVigencia}
 },null,2));
+
+let canonicalizer;
+try {
+  canonicalizer = await priceEpisodeCanonicalizerV01({ dry_run: false });
+} finally {
+  await closeAzurePool();
+}
+console.log(JSON.stringify({ engine:'Neon-compatible price episode canonicalizer', ...canonicalizer },null,2));
