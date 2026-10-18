@@ -1,0 +1,41 @@
+name: Verify Azure motor-test MCP entry
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'motor-test-azure/**'
+      - 'Dockerfile.motor-test-azure'
+      - '.github/workflows/verify-motor-test-azure-entry.yml'
+      - 'docs/MOTOR-TEST-AZURE-STATE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install MCP client for smoke test
+        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0
+
+      - name: Build independent motor-test image
+        run: docker build --file Dockerfile.motor-test-azure --tag cidef-motor-test-azure:smoke .
+
+      - name: Start image and verify HTTP transport without database credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --rm --name motor-test-azure-smoke -e PORT=3000 -p 127.0.0.1:39090:3000 cidef-motor-test-azure:smoke
+          trap 'docker stop motor-test-azure-smoke >/dev/null 2>&1 || true' EXIT
+          MCP_SMOKE_URL=http://127.0.0.1:39090/api/mcp node motor-test-azure/smoke-test.js

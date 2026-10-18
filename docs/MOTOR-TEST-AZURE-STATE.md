@@ -1,39 +1,37 @@
-# motor-test Azure — estado comprobado (2026-10-17)
+# motor-test Azure — estado comprobado
 
 ## Propósito y autoridad
-- Réplica del MCP `motor-test` certificado, origen de código: `rodrigoibanezm-cmd/cidef-data-loader`.
-- Destino: este repositorio, rama `main`. Origen y Neon intocables; no son dependencias de ejecución Azure.
-- Contratos, herramientas, cálculos y reglas comerciales deben permanecer iguales al origen. Sin rediseños.
-- El MCP PostgreSQL existente (`mcp/server.js`, `cidef-pg-mcp`) es **otro servicio**; no reemplazarlo.
+- Réplica del MCP `motor-test` certificado, origen: `rodrigoibanezm-cmd/cidef-data-loader`.
+- Destino: este repositorio, rama `main`. Origen y Neon no son dependencias de ejecución Azure.
+- Mantener contratos, herramientas, cálculos y reglas comerciales del origen.
+- `mcp/server.js` (`cidef-pg-mcp`) es otro servicio; no modificarlo ni reemplazarlo.
 
-## Código presente
-- `lib/mcp/server.js`: copia idéntica al origen (blob SHA `006fdf6966954906855ce7baa82f3b484bd4cf6b`). Herramientas declaradas: `data_describe`, `data_inspect`, `data_fetch`, `data_resolve`, `data_observe`, `crm_observe_many`, `sales_observe_many`, `sales_observe_windows`, `p2_discover`, `p2_describe`, `p2_execute`, `run_trace`.
-- `lib/p2/`: 16 archivos copiados, SHA 16/16 coincidente con origen al copiar (commit `c172327`).
-- `lib/data-floor/registry.js`: copia idéntica al origen; registradores/certificadores P1 y dependencias SALES copiadas progresivamente.
-- `lib/data-floor/identityResolver.js` y `lib/p3/executionJournal.js` presentes; el segundo fue adaptado para Azure.
-- `lib/neon.js` en este repositorio **no conecta a Neon**: adaptador de API histórica a `lib/azure-postgres.js` (nombre heredado para compatibilidad).
-- `lib/motors/ventas-monthly-dedup-sensitivity-v01.js` adaptado para eliminar cliente Neon directo.
+## Componentes
+- `lib/mcp/server.js`: servidor de motores copiado del origen; declara las 12 herramientas P1/P2/P3.
+- `lib/p2/`: unidades P2 copiadas del origen.
+- `lib/data-floor/registry.js`: registradores/certificadores P1 y dependencias SALES.
+- `lib/data-floor/identityResolver.js`: resolución de identidades.
+- `lib/p3/executionJournal.js`: trazabilidad P3 adaptada a Azure.
+- `lib/neon.js`: adaptador de compatibilidad; usa `lib/azure-postgres.js`, no conecta a Neon.
+- `lib/azure-postgres.js`: PostgreSQL Azure por `AZURE_DATABASE_URL`, driver `pg`.
+- `motor-test-azure/server.js`: entrada HTTP independiente; reutiliza `createMcpServer()` y `StreamableHTTPServerTransport` stateless del origen. Acepta MCP en `POST /api/mcp`; `GET /healthz` es health check.
+- `motor-test-azure/package.json` y `Dockerfile.motor-test-azure`: runtime Node aislado para esa entrada; no modifica el runtime de `cidef-pg-mcp`.
+- `.github/workflows/verify-motor-test-azure-entry.yml`: construye la imagen y verifica inicio, transporte y listado de herramientas sin secretos de base de datos. No despliega ni publica imagen.
 
-## Ejecución y dependencias
-- Base de datos de este código: PostgreSQL Azure vía `AZURE_DATABASE_URL` exclusivamente, driver `pg` en `package.json` raíz.
-- `lib/azure-postgres.js`: `azureQuery`, `getAzurePool`, `closeAzurePool` y compatibilidad SQL.
-- `lib/neon.js`: `queryDb`, `queryDbTransaction`, métodos de append/snapshot de tablas. Snapshots implican DDL (`CREATE/DROP/ALTER`).
-- `lib/p3/executionJournal.js`: usa conexión Azure; puede crear tablas de trazabilidad al inicializar.
-- SDK MCP y `zod` están declarados en `mcp/package.json`, **no** en `package.json` raíz. No hay entrada HTTP `api/mcp.js` para el motor de Azure; `mcp/server.js` es el MCP PostgreSQL existente.
+## Dependencias
+- El grafo de imports de `lib/mcp/server.js` contiene módulos locales en `lib/`; las dependencias externas de ejecución son `@modelcontextprotocol/sdk`, `zod` y `pg`.
+- `package.json` raíz incluye `pg`, pero no el SDK MCP ni `zod`. El paquete aislado los declara para resolver imports desde `lib/` dentro de la imagen.
+- El MCP requiere `AZURE_DATABASE_URL` al invocar motores con acceso a datos. La carga del módulo, el inicio HTTP y `tools/list` no requieren conectar a una base.
+- No usar `NEON_DATABASE_URL`, `DATABASE_URL` ni `POSTGRES_URL` como fallback.
+- Las operaciones de snapshots realizan DDL y no forman parte de las pruebas de inicio.
 
-## Validación efectuada
-- `lib/mcp/server.js` SHA idéntico (commit `32070a7`); `registry.js` SHA idéntico (commit `0d71b61`).
-- Adaptador y accesos directos adaptados: commit `beb1211`. Pruebas previas con `pg` simulado: consulta, transacción y snapshot; no equivalen a prueba real de snapshots.
-- Action `.github/workflows/validate-azure-postgres-adapter.yml`, ejecución `39051308990` (**success**, 2026-10-17, commit `1ef8327`): `SELECT 1` usando `lib/neon.js`, conexión real por `AZURE_DATABASE_URL`, transacción `BEGIN READ ONLY` + `ROLLBACK`, sin fallback a Neon. Sin cambios de datos/esquema.
-- Migración y conciliaciones P1 SALES/RVM/CRM/FORUM se trabajaron previamente; FORUM P1 fue validado. Eso **no** certifica todavía al MCP de motores completo.
+## Validación
+- El Action `validate-azure-postgres-adapter.yml`, run `39051308990`, pasó conexión real, `SELECT 1` mediante `lib/neon.js` y transacción `BEGIN READ ONLY` + `ROLLBACK`.
+- El workflow nuevo verifica el MCP en contenedor sin configuración de base: inicio, transporte HTTP Streamable, y las 12 herramientas. No invoca herramientas de negocio ni escribe datos.
+- No declarar paridad funcional completa por conexión o prueba de inicio exitosa.
 
-## Aún NO validado / NO operativo como réplica completa
-- Operaciones de snapshots reales en PostgreSQL Azure (son potencialmente destructivas).
-- Carga integral de dependencias del MCP, herramientas y contratos en ejecución real.
-- Equivalencia determinística P1/P2 extremo a extremo y trazabilidad P3 en Azure.
-- Entrada HTTP independiente, autenticación, despliegue y conexión a ChatGPT del MCP de motores.
-
-## Restricciones operativas actuales
-- No usar Neon, `DATABASE_URL` ni `POSTGRES_URL` como fallback.
-- No modificar origen, reglas certificadas, `mcp/server.js`, ni desplegar hasta validar lo requerido.
-- No declarar paridad funcional completa por una prueba de conexión exitosa.
+## Pendiente
+- Ejecutar el nuevo workflow y confirmar el resultado del runtime.
+- Despliegue, autenticación externa y conexión a ChatGPT del MCP de motores siguen fuera de esta preparación.
+- Equivalencia determinística P1/P2 y trazabilidad P3 extremo a extremo en Azure siguen pendientes.
+- Snapshots reales en Azure no validados.
