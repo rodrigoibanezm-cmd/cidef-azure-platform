@@ -69,7 +69,7 @@ function errorText(error) {
 function classifyError(error) {
   const message = String(error?.message ?? error);
   if (/^REQUIRES_DATA:/.test(message)
-    || /(?:FORUM_SNAPSHOT_NOT_FOUND|TARGET_REFERENCE_NOT_FOUND|INSUFFICIENT_EVIDENCE|NO_EVALUABLE|NOT_CERTIFIED|NO_RESOLVED)/i.test(message)) {
+    || /(?:FORUM_SNAPSHOT_NOT_FOUND|TARGET_REFERENCE_NOT_FOUND|INSUFFICIENT_EVIDENCE|NO_EVALUABLE|NO_CERTIFIED_DATA|NOT_CERTIFIED|NO_RESOLVED|_NOT_FOUND)/i.test(message)) {
     return 'REQUIRES_DATA';
   }
   if (/UNSUPPORTED_(?:EVIDENCE_SHAPE|MEASURE|DIMENSION|SALES_IDENTIFIER)/i.test(message)) {
