@@ -25,13 +25,14 @@
 - No usar `NEON_DATABASE_URL`, `DATABASE_URL` ni `POSTGRES_URL` como fallback.
 - Las operaciones de snapshots realizan DDL y no forman parte de las pruebas de inicio.
 
-## Validación
-- El Action `validate-azure-postgres-adapter.yml`, run `39051308990`, pasó conexión real, `SELECT 1` mediante `lib/neon.js` y transacción `BEGIN READ ONLY` + `ROLLBACK`.
-- El workflow nuevo verifica el MCP en contenedor sin configuración de base: inicio, transporte HTTP Streamable, y las 12 herramientas. No invoca herramientas de negocio ni escribe datos.
-- No declarar paridad funcional completa por conexión o prueba de inicio exitosa.
+## Validación comprobada en Azure
+- Esquema P3: inicializado y existente en Azure. Action [39137710513](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39137710513) pasó conexión, `SELECT 1`, transacción `READ ONLY` + `ROLLBACK` y comparación de columnas, claves e índices requeridos por `executionJournal.js`: 4 claves requeridas, 0 diferencias.
+- P1 SALES: Action [39140996041](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39140996041) pasó `data_observe` por el transporte HTTP MCP independiente contra Azure. Evidencia `P1_CERTIFIED` para `2026-09`, valor 1040; `run_trace` encontró el evento P3.
+- P2/P3: Action [39141980346](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39141980346) pasó `p2_discover`, `p2_describe` y `p2_execute` para `p2.observed_sequence` v0.1.0, usando SALES real de `2026-07` a `2026-09` (901, 1202, 1040). La repetición produjo resultado determinístico; `run_trace` devolvió los eventos P1 y dos eventos P2.
+- Los tres Actions terminaron en `success`. Ejecutaron mediante `lib/neon.js -> lib/azure-postgres.js` con `AZURE_DATABASE_URL`; los logs confirman que no hubo conexión ni fallback a Neon.
+- El resultado valida la unidad `observed_sequence` y este flujo probado. No constituye certificación completa de P2 ni de paridad funcional de todos los motores.
 
 ## Pendiente
-- Ejecutar el nuevo workflow y confirmar el resultado del runtime.
-- Despliegue, autenticación externa y conexión a ChatGPT del MCP de motores siguen fuera de esta preparación.
-- Equivalencia determinística P1/P2 y trazabilidad P3 extremo a extremo en Azure siguen pendientes.
-- Snapshots reales en Azure no validados.
+- Certificación de las demás unidades y combinaciones P2; no están cubiertas por el Action de `observed_sequence`.
+- Despliegue del servicio independiente `motor-test-azure`, autenticación externa e integración desde ChatGPT no validados por estos Actions. Las pruebas MCP se ejecutaron desde runners de GitHub.
+- Operaciones de snapshots en Azure no validadas; implican DDL y no se ejecutaron.
