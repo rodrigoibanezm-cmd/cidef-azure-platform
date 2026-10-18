@@ -38,7 +38,7 @@
 - El sincronizador compara todas las columnas de `ventas_raw` por `id`, inserta filas faltantes, actualiza filas distintas desde Neon, elimina filas solo de Azure y verifica paridad exacta antes del commit. Repetirlo sin cambios de origen deja el mismo estado final.
 - En Azure, `src/loaders/ventas-raw.js` contiene las mismas listas, pero su guardia solo permite `ventas_raw_azure_validation`; no es la ruta productiva.
 - El Action `validate-sales-2026-vin-dates-azure.yml` compara las 52 fechas en Neon y Azure con consultas dentro de transacciones `READ ONLY`, en dos lecturas independientes. No ejecuta cargas.
-- La paridad real de las 52 fechas queda pendiente de ejecutar ese Action; el código del sincronizador no prueba por sí solo el estado actual de Azure.
+- El Action [39171133667](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39171133667) se detuvo antes de conectar a las bases: faltan en el entorno `Production` los secretos de origen `NEON_DATABASE_URL`, `DATABASE_URL` y `POSTGRES_URL`. `AZURE_DATABASE_URL` pasó su validación de presencia. La paridad real de las 52 fechas sigue sin comprobarse.
 
 ## Matriz P2
 - Registro de origen y Azure revisados en `main`: ambos tienen el mismo SHA de `lib/p2/registry.js` (`d3a3deeab679cdf84bdca9893528ae22e9e0f3c2`), 13 unidades activas y las mismas versiones/contratos.
