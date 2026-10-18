@@ -1,0 +1,29 @@
+name: Validate Azure motor-test SALES and P3 trace
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-sales-p3:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 20
+    env:
+      AZURE_DATABASE_URL: \${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install MCP runtime dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 zod@3.25.76 pg@8.16.3
+
+      - name: Run read-only SALES observation and P3 trace check
+        run: node scripts/validate-motor-test-azure-data-observe.js
