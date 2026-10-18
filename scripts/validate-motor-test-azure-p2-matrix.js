@@ -407,6 +407,10 @@ try {
   }
 
   const events = trace?.events ?? [];
+  const tracedP1Evidence = new Set(events
+    .filter((item) => item.floor === 'P1' && item.status === 'SUCCESS')
+    .map((item) => item.output_json?.evidence_id)
+    .filter(Boolean));
   for (const [unitId, status] of statuses.entries()) {
     if (status.status !== 'PASS') continue;
     try {
@@ -423,6 +427,7 @@ try {
         'run_trace contains nondeterministic executions.');
       for (const id of status.evidenceIds) {
         assert.ok(successfulEvidence.has(id), 'P2 used evidence not recorded as certified P1 in this run: ' + id);
+        assert.ok(tracedP1Evidence.has(id), 'run_trace is missing the successful P1 event for evidence: ' + id);
       }
       status.p3_events = executions.length;
     } catch (error) {
