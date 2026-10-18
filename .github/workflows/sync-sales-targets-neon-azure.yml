@@ -1,0 +1,50 @@
+name: Sync certified SALES targets Neon to Azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_sync:
+        description: "Confirm copying public.ventas_metas_mensuales from Neon to Azure"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync-sales-targets:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 10
+    env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+      CONFIRM_SYNC: ${{ inputs.confirm_sync }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require manual confirmation and source credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM_SYNC}" != "true" ]]; then
+            echo "::error::Set confirm_sync=true to authorize writes to the Azure targets table"
+            exit 1
+          fi
+          if [[ -z "${NEON_DATABASE_URL:-}" ]]; then
+            echo "::error::Missing NEON_DATABASE_URL in the Production environment; no data was written"
+            exit 1
+          fi
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::Missing AZURE_DATABASE_URL in the Production environment; no data was written"
+            exit 1
+          fi
+      - name: Install PostgreSQL driver
+        run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
+      - name: Synchronize and validate certified targets
+        run: node scripts/sync-sales-targets-neon-azure.js

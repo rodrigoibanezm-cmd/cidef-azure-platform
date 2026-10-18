@@ -1,0 +1,47 @@
+name: Validate Azure P2 reference deviation for September 2026
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_execution:
+        description: "Confirm P2 execution and its normal P3 trace writes"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-reference-deviation:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 15
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+      CONFIRM_EXECUTION: ${{ inputs.confirm_execution }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require manual confirmation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM_EXECUTION}" != "true" ]]; then
+            echo "::error::Set confirm_execution=true to run P2 and write its normal P3 trace"
+            exit 1
+          fi
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::Missing AZURE_DATABASE_URL in the Production environment"
+            exit 1
+          fi
+      - name: Install MCP runtime dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 zod@3.25.76 pg@8.16.3
+      - name: Syntax-check validator
+        run: node --check scripts/validate-p2-reference-deviation-azure.js
+      - name: Validate certified September reference deviation through Azure MCP
+        run: node scripts/validate-p2-reference-deviation-azure.js
