@@ -32,7 +32,30 @@
 - Los tres Actions terminaron en `success`. Ejecutaron mediante `lib/neon.js -> lib/azure-postgres.js` con `AZURE_DATABASE_URL`; los logs confirman que no hubo conexión ni fallback a Neon.
 - El resultado valida la unidad `observed_sequence` y este flujo probado. No constituye certificación completa de P2 ni de paridad funcional de todos los motores.
 
+## Matriz P2
+- Registro de origen y Azure revisados en `main`: ambos tienen el mismo SHA de `lib/p2/registry.js` (`d3a3deeab679cdf84bdca9893528ae22e9e0f3c2`), 13 unidades activas y las mismas versiones/contratos.
+- El Action manual [validate-motor-test-azure-p2-matrix.yml](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/workflows/validate-motor-test-azure-p2-matrix.yml) está preparado para usar `AZURE_DATABASE_URL` del entorno `Production`. Ejecuta dos veces cada unidad pendiente con evidencia P1 obtenida en la misma ejecución, compara resultados y consulta `run_trace`. No se ha ejecutado.
+- `PASS` histórico corresponde a la ejecución exitosa del Action 39141980346. Las otras unidades permanecen pendientes hasta ejecutar el Action. El Action registra `FAIL`, `REQUIRES_DATA` o `BLOCKED` por unidad y continúa con las independientes.
+
+| Unidad (contrato) | Slots P1 requeridos por el contrato original | Estado comprobado |
+|---|---|---|
+| `p2.pricing_window_sales` v0.2.0 | `pricing: COMMERCIAL_CONDITION_WINDOWS`; `sales: SALES_WINDOW_OBSERVATIONS` | Pendiente |
+| `p2.forum_snapshot_transitions` v0.1.0 | `baseline`, `comparison: OPERATION_STATE_SNAPSHOT` | Pendiente |
+| `p2.open_period_deterioration_risk` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `model_history: HISTORICAL_PERIOD_SERIES` | Pendiente |
+| `p2.forum_funnel_performance` v0.1.0 | `converted`, `approved`, `expired`, `rejected: DIMENSIONAL_QUANTITATIVE_DATASET` | Pendiente |
+| `p2.target_attainment_probability` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `target: REFERENCE_OBSERVATION`; `model_history: HISTORICAL_PERIOD_SERIES` | Pendiente |
+| `p2.reconciled_seller_target_contribution` v0.1.0 | `seller_observed_to_cutoff: DIMENSIONAL_QUANTITATIVE_DATASET`; `seller_history: SELLER_CONTRIBUTION_HISTORY`; `store_target: REFERENCE_OBSERVATION`; `store_completion_history: HISTORICAL_PERIOD_SERIES` | Pendiente |
+| `p2.reference_deviation` v0.1.0 | `observed: CUMULATIVE_PERIOD_OBSERVATION`; `reference: REFERENCE_OBSERVATION` | Pendiente |
+| `p2.proportion_across_periods` v0.1.0 | `part_series`, `universe_series: PERIOD_OBSERVATION_SERIES` | Pendiente |
+| `p2.observed_pair_delta` v0.1.0 | `baseline`, `comparison: QUANTITATIVE_OBSERVATION` | Pendiente |
+| `p2.part_to_universe_ratio` v0.1.0 | `part`, `universe: QUANTITATIVE_OBSERVATION` | Pendiente |
+| `p2.observed_sequence` v0.1.0 | `sequence: PERIOD_OBSERVATION_SERIES` | PASS — Action 39141980346 |
+| `p2.period_close_estimate` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `period_calendar: PERIOD_CALENDAR`; `model_history: HISTORICAL_PERIOD_SERIES` | Pendiente |
+| `p2.reconciled_dimension_delta` v0.1.0 | `baseline_by_member`, `comparison_by_member: DIMENSIONAL_QUANTITATIVE_DATASET` | Pendiente |
+
 ## Pendiente
-- Certificación de las demás unidades y combinaciones P2; no están cubiertas por el Action de `observed_sequence`.
-- Despliegue del servicio independiente `motor-test-azure`, autenticación externa e integración desde ChatGPT no validados por estos Actions. Las pruebas MCP se ejecutaron desde runners de GitHub.
+- No hay validación de ejecución para las 12 unidades pendientes hasta ejecutar el Action manual. Los slots de la tabla describen los contratos, no prueban disponibilidad de evidencia en Azure.
+- `forum_snapshot_transitions` necesita dos snapshots diarios certificados distintos; el Action buscará snapshots en los 30 días previos. Si no los encuentra, registrará `REQUIRES_DATA`.
+- No declarar certificación completa de P2 ni paridad funcional total.
+- Despliegue del servicio independiente `motor-test-azure`, autenticación externa e integración desde ChatGPT no están validados por estos Actions.
 - Operaciones de snapshots en Azure no validadas; implican DDL y no se ejecutaron.
