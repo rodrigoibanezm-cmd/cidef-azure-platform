@@ -397,25 +397,38 @@ try {
 
   const missing = expectedPending.filter((unitId) => !statuses.has(unitId));
   assert.deepEqual(missing, [], 'The test plan omitted pending P2 units.');
-  const trace = await call('run_trace', {});
-  assert.equal(trace.run?.run_id, runId, 'run_trace returned the wrong run.');
-  const events = trace.events ?? [];
+  let trace = null;
+  let traceError = null;
+  try {
+    trace = await call('run_trace', {});
+    assert.equal(trace.run?.run_id, runId, 'run_trace returned the wrong run.');
+  } catch (error) {
+    traceError = errorText(error);
+  }
+
+  const events = trace?.events ?? [];
   for (const [unitId, status] of statuses.entries()) {
     if (status.status !== 'PASS') continue;
-    const executions = events.filter((item) =>
-      item.floor === 'P2'
-      && item.tool_name === 'p2_execute'
-      && item.status === 'SUCCESS'
-      && item.input_json?.unit_id === unitId
-      && item.output_json?.status === 'EXECUTED',
-    );
-    assert.equal(executions.length, 2, 'run_trace does not contain both successful executions for ' + unitId);
-    assert.deepEqual(executions[0].output_json.result, executions[1].output_json.result,
-      'run_trace contains nondeterministic executions for ' + unitId);
-    for (const id of status.evidenceIds) {
-      assert.ok(successfulEvidence.has(id), 'P2 used evidence not recorded as certified P1 in this run: ' + id);
+    try {
+      if (traceError) throw new Error('run_trace failed: ' + traceError);
+      const executions = events.filter((item) =>
+        item.floor === 'P2'
+        && item.tool_name === 'p2_execute'
+        && item.status === 'SUCCESS'
+        && item.input_json?.unit_id === unitId
+        && item.output_json?.status === 'EXECUTED',
+      );
+      assert.equal(executions.length, 2, 'run_trace does not contain both successful executions.');
+      assert.deepEqual(executions[0].output_json.result, executions[1].output_json.result,
+        'run_trace contains nondeterministic executions.');
+      for (const id of status.evidenceIds) {
+        assert.ok(successfulEvidence.has(id), 'P2 used evidence not recorded as certified P1 in this run: ' + id);
+      }
+      status.p3_events = executions.length;
+    } catch (error) {
+      status.status = 'FAIL';
+      status.error = errorText(error);
     }
-    status.p3_events = executions.length;
     delete status.evidenceIds;
     delete status.result;
   }
