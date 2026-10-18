@@ -55,9 +55,50 @@ const expectedIndexes = [
   { table: 'p3_runs', name: 'p3_runs_parent_idx', columns: ['parent_run_id', 'created_at'] },
 ];
 
+function parsePostgresArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || value.length < 2 || value[0] !== '{' || value.at(-1) !== '}') return null;
+
+  const body = value.slice(1, -1);
+  if (body === '') return [];
+
+  const values = [];
+  let current = '';
+  let quoted = false;
+  let escaped = false;
+  let wasQuoted = false;
+  const pushValue = () => {
+    const normalized = wasQuoted ? current : current.trim();
+    values.push(!wasQuoted && normalized === 'NULL' ? null : normalized);
+    current = '';
+    wasQuoted = false;
+  };
+
+  for (const character of body) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+    } else if (character === '\\\\') {
+      escaped = true;
+    } else if (character === '"') {
+      quoted = !quoted;
+      wasQuoted = true;
+    } else if (character === ',' && !quoted) {
+      pushValue();
+    } else {
+      current += character;
+    }
+  }
+
+  if (quoted || escaped) return null;
+  pushValue();
+  return values;
+}
+
 function sameArray(actual, expected) {
-  return Array.isArray(actual) && actual.length === expected.length
-    && actual.every((value, index) => value === expected[index]);
+  const values = parsePostgresArray(actual);
+  return values !== null && values.length === expected.length
+    && values.every((value, index) => value === expected[index]);
 }
 
 function defaultMatches(actual, expected) {
