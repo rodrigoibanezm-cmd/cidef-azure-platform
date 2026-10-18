@@ -13,11 +13,17 @@ try {
     commercial_universe: 'COMPANY',
     operations: [{ kind: 'TOTAL' }, { kind: 'BRAND' }],
   });
-  const total = sales.results.find(row => row.operation.kind === 'TOTAL')?.evidence;
+  const daily = await observeSalesEvidence({
+    measure: 'VIN_SALES',
+    evidence_shape: 'CUMULATIVE_PERIOD_OBSERVATION',
+    period,
+    cutoff,
+    filters: { commercial_universe: 'COMPANY' },
+  });
   const brands = sales.results.find(row => row.operation.kind === 'BRAND')?.evidence;
-  assert.equal(total?.authority, 'P1_CERTIFIED');
-  assert.equal(total?.temporal?.cutoff, cutoff);
-  assert.equal(total?.payload?.value > 0, true);
+  assert.equal(daily.authority, 'P1_CERTIFIED');
+  assert.equal(daily.temporal?.cutoff, cutoff);
+  assert.equal(daily.payload?.value > 0, true);
   assert.equal(brands?.authority, 'P1_CERTIFIED');
   assert.equal(brands?.temporal?.cutoff, cutoff);
   assert.equal(brands?.payload?.dimension?.id, 'BRAND');
@@ -54,7 +60,7 @@ try {
     sales: {
       period,
       cutoff,
-      total: total.payload.value,
+      daily_total: daily.payload.value,
       brands: brands.payload.members,
       series: series.payload.observations,
     },
