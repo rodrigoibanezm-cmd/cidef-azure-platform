@@ -1,0 +1,29 @@
+name: Validate remaining Azure motor-test P2 units
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-p2-matrix:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 60
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install MCP runtime dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 zod@3.25.76 pg@8.16.3
+
+      - name: Validate pending P2 units with Azure evidence and P3 trace
+        run: node scripts/validate-motor-test-azure-p2-matrix.js
