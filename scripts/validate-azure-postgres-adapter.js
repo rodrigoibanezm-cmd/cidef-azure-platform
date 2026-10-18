@@ -89,24 +89,34 @@ try {
     'ORDER BY requested.table_name',
   );
 
+  const matchingRelations = await client.query(
+    "SELECT namespace.nspname AS schema_name, relation.relname AS table_name, " +
+    "relation.oid::text AS relation_oid, relation.relkind " +
+    "FROM pg_class AS relation " +
+    "JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace " +
+    "WHERE relation.relname = ANY($1::text[]) AND relation.relkind IN ('r', 'p') " +
+    "ORDER BY namespace.nspname, relation.relname",
+    [['p3_runs', 'p3_events']],
+  );
+
   const relationByName = Object.fromEntries(
     relations.rows.map((row) => [row.table_name, row]),
   );
-  const presentRelations = relations.rows.filter((row) => row.relation_oid);
-  const relationIds = presentRelations.map((row) => row.relation_oid);
+  const relationIds = matchingRelations.rows.map((row) => row.relation_oid);
 
   const columnsSql =
-    'SELECT relation.relname AS table_name, attribute.attname AS column_name, ' +
+    'SELECT namespace.nspname AS schema_name, relation.relname AS table_name, attribute.attname AS column_name, ' +
     'format_type(attribute.atttypid, attribute.atttypmod) AS data_type, ' +
     'attribute.attnotnull AS not_null, pg_get_expr(definition.adbin, definition.adrelid) AS column_default ' +
     'FROM pg_class AS relation ' +
+    'JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace ' +
     'JOIN pg_attribute AS attribute ON attribute.attrelid = relation.oid ' +
     'LEFT JOIN pg_attrdef AS definition ON definition.adrelid = relation.oid AND definition.adnum = attribute.attnum ' +
     'WHERE relation.oid = ANY($1::oid[]) AND attribute.attnum > 0 AND NOT attribute.attisdropped ' +
     'ORDER BY relation.relname, attribute.attnum';
 
   const constraintsSql =
-    'SELECT relation.relname AS table_name, constraint_row.conname AS constraint_name, ' +
+    'SELECT namespace.nspname AS schema_name, relation.relname AS table_name, constraint_row.conname AS constraint_name, ' +
     'constraint_row.contype AS constraint_type, referenced_relation.relname AS referenced_table, ' +
     'referenced_namespace.nspname AS referenced_schema, ' +
     '(SELECT array_agg(attribute.attname ORDER BY key_item.ordinality) ' +
@@ -118,19 +128,21 @@ try {
     'pg_get_constraintdef(constraint_row.oid, true) AS definition ' +
     'FROM pg_constraint AS constraint_row ' +
     'JOIN pg_class AS relation ON relation.oid = constraint_row.conrelid ' +
+    'JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace ' +
     'LEFT JOIN pg_class AS referenced_relation ON referenced_relation.oid = constraint_row.confrelid ' +
     'LEFT JOIN pg_namespace AS referenced_namespace ON referenced_namespace.oid = referenced_relation.relnamespace ' +
     'WHERE relation.oid = ANY($1::oid[]) AND constraint_row.contype IN (\'p\', \'f\') ' +
     'ORDER BY relation.relname, constraint_row.contype, constraint_row.conname';
 
   const indexesSql =
-    'SELECT relation.relname AS table_name, index_relation.relname AS index_name, ' +
+    'SELECT namespace.nspname AS schema_name, relation.relname AS table_name, index_relation.relname AS index_name, ' +
     'index_row.indisunique AS is_unique, index_row.indisprimary AS is_primary, ' +
     'index_row.indisvalid AS is_valid, access_method.amname AS method, ' +
     '(SELECT array_agg(pg_get_indexdef(index_row.indexrelid, key_position.position, true) ORDER BY key_position.position) ' +
     ' FROM generate_series(1, index_row.indnkeyatts::int) AS key_position(position)) AS columns ' +
     'FROM pg_index AS index_row ' +
     'JOIN pg_class AS relation ON relation.oid = index_row.indrelid ' +
+    'JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace ' +
     'JOIN pg_class AS index_relation ON index_relation.oid = index_row.indexrelid ' +
     'JOIN pg_am AS access_method ON access_method.oid = index_relation.relam ' +
     'WHERE relation.oid = ANY($1::oid[]) ' +
@@ -159,7 +171,9 @@ try {
       differences.push({ object: table, expected: 'ordinary table', actual: relation.relkind });
     }
 
-    const tableColumns = actualColumns.filter((column) => column.table_name === table);
+    const tableColumns = actualColumns.filter((column) =>
+      column.table_name === table && column.schema_name === relation.schema_name,
+    );
     const columnsByName = Object.fromEntries(tableColumns.map((column) => [column.column_name, column]));
 
     for (const expected of requiredColumns) {
@@ -190,6 +204,7 @@ try {
   for (const expected of expectedConstraints) {
     const actual = actualConstraints.find((constraint) =>
       constraint.table_name === expected.table
+      && constraint.schema_name === relationByName[expected.table]?.schema_name
       && constraint.constraint_type === expected.type
       && sameArray(constraint.columns, expected.columns)
       && (expected.type !== 'f'
@@ -204,7 +219,9 @@ try {
 
   for (const expected of expectedIndexes) {
     const actual = actualIndexes.find((index) =>
-      index.table_name === expected.table && index.index_name === expected.name,
+      index.table_name === expected.table
+        && index.schema_name === relationByName[expected.table]?.schema_name
+        && index.index_name === expected.name,
     );
     if (!actual) {
       differences.push({ object: expected.table + '.' + expected.name, expected, actual: 'missing' });
@@ -242,8 +259,9 @@ try {
     status: differences.length === 0 ? 'PASS' : 'FAIL',
     schema_resolution: Object.fromEntries(relations.rows.map((row) => [
       row.table_name,
-      row.relation_oid ? { schema: row.schema_name, relkind: row.relkind } : 'missing',
+      row.relation_oid ? { schema: row.schema_name, relkind: row.relkind } : 'missing on search_path',
     ])),
+    matching_relations_in_all_schemas: matchingRelations.rows,
     columns: actualColumns,
     keys: actualConstraints,
     required_indexes: expectedIndexes,
