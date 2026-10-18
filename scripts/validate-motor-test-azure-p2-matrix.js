@@ -66,6 +66,18 @@ function errorText(error) {
   return error?.code ? error.code + ': ' + message : message;
 }
 
+function classifyError(error) {
+  const message = String(error?.message ?? error);
+  if (/^REQUIRES_DATA:/.test(message)
+    || /(?:FORUM_SNAPSHOT_NOT_FOUND|TARGET_REFERENCE_NOT_FOUND|INSUFFICIENT_EVIDENCE|NO_EVALUABLE|NOT_CERTIFIED|NO_RESOLVED)/i.test(message)) {
+    return 'REQUIRES_DATA';
+  }
+  if (/UNSUPPORTED_(?:EVIDENCE_SHAPE|MEASURE|DIMENSION|SALES_IDENTIFIER)/i.test(message)) {
+    return 'BLOCKED';
+  }
+  return 'FAIL';
+}
+
 function resultContent(result, toolName) {
   if (result?.isError) {
     const text = result.content?.find((part) => part.type === 'text')?.text;
@@ -190,10 +202,9 @@ async function runUnit(unitId, units, buildEvidence) {
     const execution = await executeDeterministically(unitId, detail, evidence.evidence, evidence.parameters);
     statuses.set(unitId, { status: 'PASS', ...execution });
   } catch (error) {
-    const message = errorText(error);
     statuses.set(unitId, {
-      status: message.startsWith('REQUIRES_DATA:') ? 'REQUIRES_DATA' : 'FAIL',
-      error: message,
+      status: classifyError(error),
+      error: errorText(error),
     });
   }
 }
