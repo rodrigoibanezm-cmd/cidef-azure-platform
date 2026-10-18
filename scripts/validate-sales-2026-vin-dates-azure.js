@@ -1,10 +1,8 @@
-import { appendFile } from 'node:fs/promises';
-import { queryDb } from '../lib/neon.js';
-import { closeAzurePool } from '../lib/azure-postgres.js';
-
-// Source: certified cidef-data-loader import-estadisticas-venta.js.
-// Its current override list has 51 August VINs and 1 September VIN.
-const EXPECTED = new Map([
+import pg from 'pg';
+const { Client } = pg;
+const neonUrl = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const azureUrl = process.env.AZURE_DATABASE_URL;
+const expected = new Map([
   ['LVAV2MAB2TU485673', '2026-08-31'],
   ['LGJE5EE01TM514771', '2026-08-31'],
   ['LVAV2MAB9TU488506', '2026-08-31'],
@@ -58,88 +56,89 @@ const EXPECTED = new Map([
   ['LVAV2MAB5TU484422', '2026-08-31'],
   ['LGJE5EE06TM529038', '2026-09-01'],
 ]);
+const azureHost = 'cidef-postgres-prod.postgres.database.azure.com';
+const sql = `SELECT upper(btrim(nro_vin_chasis::text)) AS vin, fecha_factura::text AS fecha_factura
+FROM public.ventas_raw WHERE upper(btrim(nro_vin_chasis::text)) = ANY($1::text[])
+ORDER BY upper(btrim(nro_vin_chasis::text)), fecha_factura::text`;
 
-function cleanError(error) {
+function safeError(error) {
   let message = String(error?.message ?? error);
-  const secret = process.env.AZURE_DATABASE_URL;
-  if (secret) message = message.split(secret).join('[redacted]');
+  for (const secret of [neonUrl, azureUrl].filter(Boolean)) message = message.split(secret).join('[redacted]');
   message = message.replace(/postgres(?:ql)?:\/\/[^\s"'\]}]+/gi, '[redacted connection string]');
   return error?.code ? `${error.code}: ${message}` : message;
 }
-
-function dateOnly(value) {
-  if (value instanceof Date) return Number.isNaN(value.valueOf()) ? null : value.toISOString().slice(0, 10);
-  const match = /^(\d{4}-\d{2}-\d{2})(?:$|[ T])/.exec(String(value ?? '').trim());
-  return match ? match[1] : null;
+function host(url, label) {
+  try { return new URL(url).hostname; } catch { throw new Error(`${label} connection URL is invalid`); }
 }
-
-async function main() {
-  if (!process.env.AZURE_DATABASE_URL) throw new Error('AZURE_DATABASE_URL is not configured in the Production environment.');
-
-  const vins = [...EXPECTED.keys()];
-  const rows = await queryDb(`
-    SELECT upper(btrim(nro_vin_chasis::text)) AS vin, fecha_factura::text AS fecha_factura
-    FROM public.ventas_raw
-    WHERE upper(btrim(nro_vin_chasis::text)) = ANY($1::text[])
-    ORDER BY upper(btrim(nro_vin_chasis::text)), fecha_factura::text
-  `, [vins]);
-
-  const byVin = new Map(vins.map((vin) => [vin, []]));
+function day(value) {
+  if (value instanceof Date) return Number.isNaN(value.valueOf()) ? null : value.toISOString().slice(0, 10);
+  return /^(\d{4}-\d{2}-\d{2})(?:$|[ T])/.exec(String(value ?? '').trim())?.[1] ?? null;
+}
+function canonical(rows) {
+  const map = new Map([...expected.keys()].map(v => [v, []]));
   for (const row of rows) {
     const vin = String(row.vin ?? '').trim().toUpperCase();
-    if (byVin.has(vin)) byVin.get(vin).push(row.fecha_factura);
+    if (map.has(vin)) map.get(vin).push(day(row.fecha_factura));
   }
-
-  const results = vins.map((vin) => {
-    const dates = byVin.get(vin).map((value) => ({
-      fecha_factura: value == null ? null : String(value),
-      date: dateOnly(value),
-    }));
-    const missing = dates.length === 0;
-    return {
-      vin,
-      expected_date: EXPECTED.get(vin),
-      status: missing ? 'MISSING' : dates.some((item) => item.date !== EXPECTED.get(vin)) ? 'DATE_MISMATCH' : 'PASS',
-      matching_rows: dates.length,
-      rows: dates,
-    };
-  });
-  const differences = results.filter((item) => item.status !== 'PASS');
-  const report = {
-    diagnostic: 'sales_2026_vin_operational_date_overrides',
-    adapter: 'lib/neon.js -> lib/azure-postgres.js',
-    database: 'PostgreSQL Azure via AZURE_DATABASE_URL',
-    neon_connection_or_fallback: 'NONE',
-    read_only: true,
-    certified_source_counts: { august_2026: 51, september_2026: 1, total: 52 },
-    checked_vins: results.length,
-    pass: results.length - differences.length,
-    differences: differences.length,
-    status: differences.length ? 'DIFFERENCES_FOUND' : 'PASS',
-    results,
-  };
-  const output = JSON.stringify(report, null, 2);
-  console.log(output);
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    await appendFile(process.env.GITHUB_STEP_SUMMARY,
-      `## SALES VIN overrides 2026 Azure validation\n\nChecked: ${report.checked_vins}; PASS: ${report.pass}; differences: ${report.differences}.\n\n` +
-      `\`\`json\n${output}\n\`\`\`\n`);
-  }
-  if (differences.length) process.exitCode = 1;
+  for (const dates of map.values()) dates.sort((a,b)=>String(a).localeCompare(String(b)));
+  return map;
 }
+async function readOnlySnapshot(url) {
+  const client = new Client({ connectionString:url, ssl:{rejectUnauthorized:false}, connectionTimeoutMillis:15000, statement_timeout:30000 });
+  let inTx = false;
+  try {
+    await client.connect();
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    inTx = true;
+    const result = await client.query(sql, [[...expected.keys()]]);
+    await client.query('ROLLBACK');
+    inTx = false;
+    return result.rows;
+  } finally {
+    if (inTx) await client.query('ROLLBACK').catch(()=>{});
+    await client.end().catch(()=>{});
+  }
+}
+function same(left,right) {
+  const a=canonical(left),b=canonical(right);
+  return [...expected.keys()].every(v=>JSON.stringify(a.get(v))===JSON.stringify(b.get(v)));
+}
+async function main() {
+  if (!neonUrl) throw new Error('Missing Neon source secret: configure NEON_DATABASE_URL, DATABASE_URL or POSTGRES_URL in Production.');
+  if (!azureUrl) throw new Error('Missing AZURE_DATABASE_URL in Production.');
+  if (!host(neonUrl,'Neon').endsWith('.neon.tech')) throw new Error('Configured source is not a Neon host.');
+  if (host(azureUrl,'Azure')!==azureHost) throw new Error('AZURE_DATABASE_URL does not point to the approved CIDEF Azure PostgreSQL host.');
+  if (expected.size!==52) throw new Error(`Certified override list count changed: ${expected.size}`);
 
-try {
-  await main();
-} catch (error) {
-  console.error(JSON.stringify({
-    diagnostic: 'sales_2026_vin_operational_date_overrides',
-    status: 'BLOCKED',
-    error: cleanError(error),
-  }));
-  process.exitCode = 1;
-} finally {
-  await closeAzurePool().catch((error) => {
-    console.error(JSON.stringify({ cleanup: 'failed', error: cleanError(error) }));
-    process.exitCode = 1;
+  const neon1=await readOnlySnapshot(neonUrl), azure1=await readOnlySnapshot(azureUrl);
+  const neon2=await readOnlySnapshot(neonUrl), azure2=await readOnlySnapshot(azureUrl);
+  const n=canonical(neon1), a=canonical(azure1);
+  const repeatable=same(neon1,neon2)&&same(azure1,azure2);
+  const results=[...expected].map(([vin,date])=>{
+    const nd=n.get(vin), ad=a.get(vin);
+    const status=!nd.length?'MISSING_IN_NEON':!ad.length?'MISSING_IN_AZURE':
+      JSON.stringify(nd)!==JSON.stringify(ad)?'NEON_AZURE_DIFFERENCE':
+      !nd.every(x=>x===date)?'NEON_EXPECTED_DATE_MISMATCH':
+      !ad.every(x=>x===date)?'AZURE_EXPECTED_DATE_MISMATCH':'PASS';
+    return {vin,expected_date:date,neon_dates:nd,azure_dates:ad,status};
   });
+  const differences=results.filter(x=>x.status!=='PASS');
+  const report={diagnostic:'sales_2026_vin_neon_azure_parity',read_only:true,
+    source_override_counts:{august_2026:51,september_2026:1,total:52},
+    checked_vins:results.length,repeatable_read_results:repeatable,
+    pass:results.length-differences.length,differences:differences.length,
+    status:differences.length||!repeatable?'DIFFERENCES_FOUND':'PASS',results};
+  const output=JSON.stringify(report,null,2);
+  console.log(output);
+  if(process.env.GITHUB_STEP_SUMMARY) {
+    const {appendFile}=await import('node:fs/promises');
+    await appendFile(process.env.GITHUB_STEP_SUMMARY,
+      `## SALES VIN Neon/Azure parity\n\nVIN: ${report.checked_vins}; PASS: ${report.pass}; differences: ${report.differences}; repeatable reads: ${report.repeatable_read_results}.\n\n`);
+  }
+  if(differences.length||!repeatable) process.exitCode=1;
+}
+try { await main(); }
+catch(error) {
+  console.error(JSON.stringify({diagnostic:'sales_2026_vin_neon_azure_parity',status:'BLOCKED',error:safeError(error)}));
+  process.exitCode=1;
 }

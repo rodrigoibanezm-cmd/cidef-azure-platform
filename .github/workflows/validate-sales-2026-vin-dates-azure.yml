@@ -1,4 +1,4 @@
-name: Validate SALES 2026 VIN dates in Azure
+name: Validate SALES VIN parity Neon Azure
 
 on:
   workflow_dispatch:
@@ -7,11 +7,14 @@ permissions:
   contents: read
 
 jobs:
-  validate-sales-vins:
+  validate-sales-vin-parity:
     runs-on: ubuntu-latest
     environment: Production
     timeout-minutes: 10
     env:
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
       AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
     steps:
       - name: Checkout main
@@ -22,14 +25,18 @@ jobs:
           node-version: 22
       - name: Install PostgreSQL driver
         run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
-      - name: Syntax-check read-only validator
+      - name: Syntax-check validator
         run: node --check scripts/validate-sales-2026-vin-dates-azure.js
-      - name: Validate source VIN dates using read-only queries
+      - name: Compare Neon and Azure (read-only)
         shell: bash
         run: |
           set -euo pipefail
           if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
-            echo "::error::AZURE_DATABASE_URL is not configured in the Production environment"
+            echo "::error::Missing AZURE_DATABASE_URL in the Production environment"
+            exit 1
+          fi
+          if [[ -z "${NEON_DATABASE_URL:-}" && -z "${DATABASE_URL:-}" && -z "${POSTGRES_URL:-}" ]]; then
+            echo "::error::Missing Neon source secret: configure NEON_DATABASE_URL, DATABASE_URL or POSTGRES_URL in Production"
             exit 1
           fi
           node scripts/validate-sales-2026-vin-dates-azure.js
