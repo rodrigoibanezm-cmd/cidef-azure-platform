@@ -23,7 +23,7 @@ try {
   const brands = sales.results.find(row => row.operation.kind === 'BRAND')?.evidence;
   assert.equal(daily.authority, 'P1_CERTIFIED');
   assert.equal(daily.temporal?.cutoff, cutoff);
-  assert.equal(daily.payload?.value > 0, true);
+  assert.equal(daily.payload?.observed_value > 0, true);
   assert.equal(brands?.authority, 'P1_CERTIFIED');
   assert.equal(brands?.temporal?.cutoff, cutoff);
   assert.equal(brands?.payload?.dimension?.id, 'BRAND');
@@ -60,7 +60,7 @@ try {
     sales: {
       period,
       cutoff,
-      daily_total: daily.payload.value,
+      daily_total: daily.payload.observed_value,
       brands: brands.payload.members,
       series: series.payload.observations,
     },
