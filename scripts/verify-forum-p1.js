@@ -43,7 +43,7 @@ try {
   console.log(JSON.stringify({ source: 'FORUM_AZURE_SCHEMA_INVENTORY', objects, raw_counts: rawCounts }));
 
   const contract = describeForum();
-  assert.equal(contract.version, '0.11');
+  assert.equal(contract.version, '0.12');
   assert.deepEqual(contract.operations, ['DESCRIBE', 'INSPECT', 'FETCH', 'OBSERVE']);
   assert.equal(contract.measures.QUOTATIONS.rule, 'ALL_COTIZACION_RECORDS');
   assert.equal(contract.measures.APPLICATIONS.rule, 'TIPO_PROCESO_NOT_COTIZACION');
@@ -55,7 +55,7 @@ try {
   for (const [measure, expected] of Object.entries(neonBaseline)) {
     const evidence = await observeForumEvidence({ measure, period, cutoff });
     assert.equal(evidence.status, 'COMPLETE', `${measure} evidence is incomplete`);
-    assert.equal(evidence.evidence_version, '0.11', `${measure} contract version differs`);
+    assert.equal(evidence.evidence_version, '0.12', `${measure} contract version differs`);
     assert.equal(evidence.temporal.from, '2026-09-01', `${measure} period start differs`);
     assert.equal(evidence.temporal.to, cutoff, `${measure} cutoff differs`);
     results[measure] = evidence.payload.value;

@@ -5,10 +5,13 @@ import { describeForum } from '../lib/data-floor/forumCertifier.js';
 
 test('P1 FORUM publishes explicit financing semantics',()=>{
   const d=describeForum();
-  assert.equal(d.version,'0.11');
+  assert.equal(d.version,'0.12');
   assert.equal(d.measures.UFIS.unit,'VEHICLE_UNIT');
   assert.match(d.measures.UFIS.meaning,/executed credit\/success/i);
   assert.match(d.measures.CURSES.meaning,/operations/i);
+  assert.equal(d.measures.PRECURSE.unit,'OPERATION');
+  assert.match(d.measures.PRECURSE.meaning,/latest available snapshot/i);
+  assert.notEqual(d.measures.PRECURSE.rule,d.measures.APPLICATIONS.rule);
   assert.ok(d.dimensions.includes('STATUS'));
   assert.ok(d.dimensions.includes('CERTIFIED_STAGE'));
   assert.ok(d.dimensions.includes('NETWORK'));

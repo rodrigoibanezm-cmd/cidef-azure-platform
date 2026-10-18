@@ -46,6 +46,7 @@ jobs:
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
       - name: Install and canonicalize PRICING P1 tables in Azure PostgreSQL
+        if: ${{ !contains(github.event.head_commit.message, '[como-vamos-p1-only]') }}
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
         shell: bash
@@ -61,7 +62,7 @@ jobs:
             "$IMAGE" scripts/pricing-p1/verify-pricing-p1.js
 
       - name: Recover missing FORUM snapshots from the R2 mirror in Azure Blob
-        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') && !contains(github.event.head_commit.message, '[como-vamos-p1-only]') }}
         id: forum_recovery
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
@@ -144,7 +145,7 @@ jobs:
           rm -rf "$WORK_DIR"
 
       - name: Verify SALES P1 against Azure PostgreSQL
-        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') && !contains(github.event.head_commit.message, '[como-vamos-p1-only]') }}
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
         shell: bash
@@ -156,7 +157,7 @@ jobs:
             "$IMAGE" scripts/verify-sales-p1.js
 
       - name: Verify RVM P1 against Neon September baseline
-        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') && !contains(github.event.head_commit.message, '[como-vamos-p1-only]') }}
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
         shell: bash
@@ -168,7 +169,7 @@ jobs:
             "$IMAGE" scripts/verify-rvm-p1.js
 
       - name: Verify CRM P1 against Neon September baseline
-        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') && !contains(github.event.head_commit.message, '[como-vamos-p1-only]') }}
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
         shell: bash
@@ -180,7 +181,7 @@ jobs:
             "$IMAGE" scripts/verify-crm-p1.js
 
       - name: Verify FORUM P1 against Neon September baseline
-        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[pricing-p1-only]') && !contains(github.event.head_commit.message, '[como-vamos-p1-only]') }}
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
         shell: bash
@@ -194,6 +195,18 @@ jobs:
             --entrypoint node \
             -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
             "$IMAGE" scripts/verify-forum-p1.js
+
+      - name: Verify P1 capabilities for Cómo vamos against Azure PostgreSQL
+        if: ${{ contains(github.event.head_commit.message, '[como-vamos-p1-only]') }}
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --entrypoint node \
+            -e AZURE_DATABASE_URL="$AZURE_DATABASE_URL" \
+            "$IMAGE" scripts/verify-como-vamos-p1.js
 
       - name: Deploy to existing Container Apps environment
         env:

@@ -7,6 +7,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { getAzurePool } from "../lib/azure-postgres.js";
 import { ventasMonthlyActualV01 } from "../lib/motors/ventas-monthly-actual-v01.js";
 import { pricingHistoryV01 } from "../lib/motors/pricing-history-v01.js";
+import { describeSales, observeSalesEvidence } from "../lib/data-floor/salesCertifier.js";
+import { observeSalesMany } from "../lib/data-floor/sales/multiObserve.js";
 import { describeRvm, inspectRvm, fetchRvm, observeRvmEvidence } from "../lib/data-floor/rvmCertifier.js";
 import { describeCrm, inspectCrm, observeCrmEvidence } from "../lib/data-floor/crmCertifier.js";
 import { describeForum, inspectForum, fetchForum, observeForumEvidence } from "../lib/data-floor/forumCertifier.js";
@@ -141,6 +143,61 @@ function makeServer(principal) {
     });
   }
   if (principal.permissions.read) {
+    server.registerTool("sales_data_describe", {
+      description: "Describe the certified SALES P1 measures, cutoffs, historical series, filters, and dimensions available in Azure PostgreSQL.",
+      inputSchema: {}
+    }, async () => {
+      const result = describeSales();
+      audit({ action: "mcp.tool", tool: "sales_data_describe", subject: principal.subject, status: "success" });
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+    });
+    server.registerTool("sales_data_observe", {
+      description: "Return certified SALES P1 evidence from Azure PostgreSQL. Use CUMULATIVE_PERIOD_OBSERVATION with an explicit YYYY-MM-DD cutoff for the open-period daily value; use PERIOD_OBSERVATION_SERIES for closed-month history. Filters may include canonical brand_id.",
+      inputSchema: {
+        measure: z.enum(["VIN_SALES"]),
+        evidence_shape: z.enum([
+          "QUANTITATIVE_OBSERVATION", "CUMULATIVE_PERIOD_OBSERVATION", "PERIOD_CALENDAR",
+          "HISTORICAL_PERIOD_SERIES", "PERIOD_OBSERVATION_SERIES", "DIMENSIONAL_QUANTITATIVE_DATASET",
+          "SELLER_CONTRIBUTION_HISTORY",
+        ]).optional(),
+        period: z.string().optional(),
+        cutoff: z.string().optional(),
+        period_from: z.string().optional(),
+        period_to: z.string().optional(),
+        dimension: z.enum(["MODEL", "STORE", "SELLER", "NETWORK"]).optional(),
+        filters: z.record(z.string(), z.unknown()).optional(),
+      }
+    }, async (input) => {
+      try {
+        const result = await observeSalesEvidence(input);
+        audit({ action: "mcp.tool", tool: "sales_data_observe", subject: principal.subject, status: "success" });
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        audit({ action: "mcp.tool", tool: "sales_data_observe", subject: principal.subject, status: "error" });
+        return { isError: true, content: [{ type: "text", text: error.message }] };
+      }
+    });
+    server.registerTool("sales_observe_many", {
+      description: "Return compatible certified SALES P1 observations for one explicit period and daily cutoff. BRAND returns a certified canonical brand split including unresolved identities; TOTAL returns the company total.",
+      inputSchema: {
+        period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+        cutoff: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-\d{2}$/),
+        commercial_universe: z.enum(["COMPANY", "OWN_STORES", "DEALERS"]).optional(),
+        operations: z.array(z.object({
+          kind: z.enum(["TOTAL", "BRAND", "BRAND_NETWORK", "MODEL_NETWORK_BY_BRAND"]),
+          brand_id: z.union([z.string(), z.number()]).optional(),
+        }).strict()).min(1),
+      }
+    }, async (input) => {
+      try {
+        const result = await observeSalesMany(input);
+        audit({ action: "mcp.tool", tool: "sales_observe_many", subject: principal.subject, status: "success" });
+        return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result };
+      } catch (error) {
+        audit({ action: "mcp.tool", tool: "sales_observe_many", subject: principal.subject, status: "error" });
+        return { isError: true, content: [{ type: "text", text: error.message }] };
+      }
+    });
     server.registerTool("pricing_history_v01", {
       description: "Return certified CIDEF pricing history and assigned VINs from Azure PostgreSQL using the original PRICING P1 contract.",
       inputSchema: {
@@ -294,7 +351,7 @@ function makeServer(principal) {
       "Return certified FORUM P1 quantitative, period-series, dimensional, or exact-snapshot evidence.",
       {
         measure: z.enum([
-          "OPERATION_STATES", "QUOTATIONS", "APPLICATIONS", "CURSES", "UFIS",
+          "OPERATION_STATES", "QUOTATIONS", "APPLICATIONS", "PRECURSE", "CURSES", "UFIS",
           "COHORT_CONVERTED", "COHORT_APPROVED", "COHORT_EXPIRED", "COHORT_REJECTED",
         ]),
         evidence_shape: z.enum([
