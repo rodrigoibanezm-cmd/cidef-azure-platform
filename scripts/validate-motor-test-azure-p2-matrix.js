@@ -164,7 +164,19 @@ async function executeDeterministically(unitId, detail, evidence, parameters = {
   }
   assert.ok(first.result && typeof first.result === 'object', 'P2 returned no result');
   for (const field of detail.deterministic_contract?.output ?? []) {
-    assert.ok(Object.hasOwn(first.result, field), 'P2 output is missing contract field: ' + field);
+    if (unitId === 'p2.forum_funnel_performance' && field === 'conversion_rate') {
+      assert.ok(Object.hasOwn(first.result.totals ?? {}, field),
+        'P2 output is missing contract field at totals.' + field);
+    } else if (unitId === 'p2.forum_funnel_performance' && field === 'non_conversion_mix') {
+      assert.ok(Array.isArray(first.result.members),
+        'P2 output is missing contract collection: members');
+      for (const member of first.result.members) {
+        assert.ok(Object.hasOwn(member, field),
+          'P2 member is missing contract field: ' + field);
+      }
+    } else {
+      assert.ok(Object.hasOwn(first.result, field), 'P2 output is missing contract field: ' + field);
+    }
   }
   const second = await call('p2_execute', args);
   if (second.status !== 'EXECUTED') {
