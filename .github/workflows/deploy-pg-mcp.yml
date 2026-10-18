@@ -10,6 +10,7 @@ on:
       - 'scripts/verify-rvm-p1.js'
       - 'scripts/verify-crm-p1.js'
       - 'scripts/verify-forum-p1.js'
+      - 'scripts/verify-como-vamos-p1.js'
       - 'scripts/install-forum-universe-view.js'
       - 'scripts/forum-raw-inventory.js'
       - 'scripts/recover-forum-snapshots-azure.js'
