@@ -103,7 +103,14 @@ try {
   assert.equal(evidence.universe?.commercial_universe, 'COMPANY');
   assert.ok(Number.isSafeInteger(evidence.payload?.value) && evidence.payload.value > 0);
   assert.ok(evidence.evidence_id);
-  assert.equal(evidence.temporal?.period_identity, period);
+  const periodStart = period + '-01';
+  const periodEnd = new Date(Date.UTC(
+    previousMonth.getUTCFullYear(),
+    previousMonth.getUTCMonth() + 1,
+    0,
+  )).toISOString().slice(0, 10);
+  assert.equal(evidence.temporal?.date_from, periodStart);
+  assert.equal(evidence.temporal?.date_to, periodEnd);
 
   const trace = structured(await client.callTool({
     name: 'run_trace',
