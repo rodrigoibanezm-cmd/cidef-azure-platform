@@ -12,10 +12,10 @@ const [adapterSource, postgresSource] = await Promise.all([
   readFile(new URL('../lib/azure-postgres.js', import.meta.url), 'utf8'),
 ]);
 
-assert.match(adapterSource, /from ['"]\\.\\/azure-postgres\\.js['"]/);
-assert.match(postgresSource, /process\\.env\\.AZURE_DATABASE_URL/);
+assert.match(adapterSource, /from ['"]\.\/azure-postgres\.js['"]/);
+assert.match(postgresSource, /process\.env\.AZURE_DATABASE_URL/);
 for (const source of [adapterSource, postgresSource]) {
-  assert.doesNotMatch(source, /NEON_DATABASE_URL|@neondatabase\\/serverless|neon\\.tech/i);
+  assert.doesNotMatch(source, /NEON_DATABASE_URL|@neondatabase\/serverless|neon\.tech/i);
 }
 
 const expectedColumns = {
@@ -61,8 +61,8 @@ function sameArray(actual, expected) {
 }
 
 function defaultMatches(actual, expected) {
-  if (expected === 'now') return /^now\\(\\)$/i.test(actual ?? '');
-  if (expected === 'sequence') return /^nextval\\(/i.test(actual ?? '');
+  if (expected === 'now') return /^now\(\)$/i.test(actual ?? '');
+  if (expected === 'sequence') return /^nextval\(/i.test(actual ?? '');
   return true;
 }
 
