@@ -3,9 +3,11 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { closeAzurePool, getAzurePool } from '../lib/azure-postgres.js';
 import { createMcpServer } from '../lib/mcp/server.js';
+import { buildComoVamos } from './como-vamos.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const MCP_PATH = '/api/mcp';
+const COMO_VAMOS_PATH = '/api/como-vamos';
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 const AUTH_MODE = process.env.MCP_AUTH_MODE || 'entra';
 const LOCAL_TEST_MODE = AUTH_MODE === 'local-test';
@@ -59,7 +61,7 @@ function oauthMetadata() {
   };
 }
 
-async function authorize(req, res) {
+async function authorize(req, res, { appOnly = false } = {}) {
   if (LOCAL_TEST_MODE) return true;
 
   const header = req.headers.authorization || '';
@@ -90,9 +92,10 @@ async function authorize(req, res) {
     sendJson(res, 401, { error: 'invalid_token' });
     return false;
   }
-  if (!scopes.includes('access_as_user')
-    && !roles.some((role) => /^pg[._](read|write|admin)$/i.test(String(role)))) {
-    sendJson(res, 403, { error: 'token lacks MCP access scope or role' });
+  const roleAllowed = roles.some((role) => /^pg[._]read$/i.test(String(role)));
+  const allowed = appOnly ? scopes.length === 0 && roleAllowed : scopes.includes('access_as_user') || roles.some((role) => /^pg[._](read|write|admin)$/i.test(String(role)));
+  if (!allowed) {
+    sendJson(res, 403, { error: appOnly ? 'application token lacks pg.read role' : 'token lacks MCP access scope or role' });
     return false;
   }
   return true;
@@ -118,6 +121,20 @@ const httpServer = http.createServer(async (req, res) => {
     `/.well-known/oauth-protected-resource${MCP_PATH}`,
   ].includes(pathname)) {
     return sendJson(res, 200, oauthMetadata(), { 'cache-control': 'public, max-age=300' });
+  }
+  if (pathname === COMO_VAMOS_PATH) {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'METHOD_NOT_ALLOWED' }, { allow: 'GET' });
+    if (!await authorize(req, res, { appOnly: true })) return;
+    const url = new URL(req.url || '/', 'http://localhost');
+    const requested = url.searchParams.get('period');
+    const period = requested || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' }).slice(0, 7);
+    try {
+      const result = await buildComoVamos(period);
+      return sendJson(res, 200, result, { 'cache-control': 'no-store, max-age=0' });
+    } catch (error) {
+      const status = error?.message === 'INVALID_PERIOD' ? 400 : 500;
+      return sendJson(res, status, { error: error?.message || 'COMO_VAMOS_FAILED' }, { 'cache-control': 'no-store, max-age=0' });
+    }
   }
   if (pathname !== MCP_PATH) {
     return sendJson(res, 404, { error: 'NOT_FOUND' });
