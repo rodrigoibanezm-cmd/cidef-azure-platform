@@ -205,10 +205,15 @@ jobs:
             --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
             "$APP_URL/api/mcp")
           [[ "$STATUS" == "401" ]] || { echo "::error::Anonymous MCP request returned HTTP $STATUS (expected 401)"; exit 1; }
-          echo "Health, PostgreSQL SELECT 1, OAuth metadata and anonymous rejection passed." >> "$GITHUB_STEP_SUMMARY"
+          API_STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' "$APP_URL/api/como-vamos?period=2026-09")
+          [[ "$API_STATUS" == "401" ]] || { echo "::error::Anonymous Cómo vamos request returned HTTP $API_STATUS (expected 401)"; exit 1; }
+          echo "Health, PostgreSQL SELECT 1, OAuth metadata and anonymous MCP/API rejection passed." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install MCP client dependencies for authenticated integration checks
         run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 jose@6.1.0 zod@3.25.76 pg@8.16.3
 
-      - name: Validate tools, Azure SALES P1, P2 determinism and P3 trace through loopback test server
+      - name: Validate live Cómo vamos P1/P2 results and P3 trace against Azure PostgreSQL
+        run: node scripts/validate-como-vamos-api.js
+
+      - name: Validate motor-test tools, SALES P1, P2 determinism and P3 trace through loopback test server
         run: node scripts/validate-motor-test-azure-p2-p3.js
