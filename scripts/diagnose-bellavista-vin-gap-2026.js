@@ -164,15 +164,19 @@ async function main() {
       p.validated AS persona_validated
     FROM public.persona_aliases a
     JOIN public.personas_master p ON p.persona_id=a.persona_id
-    WHERE lower(trim(p.nombre_canonico))=lower($1)
+    WHERE upper(trim(p.nombre_canonico)) LIKE '%TAMPOA%'
+      AND (upper(trim(p.nombre_canonico)) LIKE '%VIRGINIA%'
+        OR upper(trim(p.usuario_canonico))='VTAMPOA')
     ORDER BY a.valor_raw
-  `, ['Virginia Tampoa']);
+  `);
+  const virginiaPersonIds = new Set(aliasRows.map((row) => String(row.persona_id)));
   const virginiaAliasKeys = new Set(aliasRows.map((row) => norm(row.valor_raw)));
   const virginiaCanonNames = new Set(aliasRows.map((row) => norm(row.nombre_canonico)));
   const virginiaCanonicalRows = bellavistaDetails.filter((row) =>
-    norm(row.vendedor_nombre) === norm('Virginia Tampoa'));
+    (row.persona_id != null && virginiaPersonIds.has(String(row.persona_id)))
+    || norm(row.vendedor_nombre).includes('virginia') && norm(row.vendedor_nombre).includes('tampoa'));
   const virginiaAliasRows = bellavistaDetails.filter((row) =>
-    norm(row.vendedor_nombre) !== norm('Virginia Tampoa')
+    !(row.persona_id != null && virginiaPersonIds.has(String(row.persona_id)))
     && (virginiaAliasKeys.has(norm(row.vendedor)) || virginiaCanonNames.has(norm(row.vendedor))));
   const virginiaRows = [...new Map([...virginiaCanonicalRows, ...virginiaAliasRows]
     .map((row) => [String(row.vin ?? '').toUpperCase(), row])).values()];
@@ -184,7 +188,7 @@ async function main() {
       p.validated AS persona_validated
     FROM public.persona_aliases a
     JOIN public.personas_master p ON p.persona_id=a.persona_id
-    WHERE lower(trim(a.valor_raw)) = ANY($1::text[])
+    WHERE lower(translate(trim(a.valor_raw), 'ÁÉÍÓÚÜÑáéíóúüñ', 'AEIOUUNaeiouun')) = ANY($1::text[])
     ORDER BY lower(a.valor_raw), p.nombre_canonico
   `, [rawSellers.map(norm)]) : [];
   const aliasByRaw = new Map();
