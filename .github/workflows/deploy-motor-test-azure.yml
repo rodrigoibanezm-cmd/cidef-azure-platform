@@ -66,6 +66,42 @@ jobs:
           # GitHub OIDC is used only for Azure deployment. The personal MCP endpoint accepts requests without OAuth.
           echo "IDENTITY_ID=$IDENTITY_ID" >> "$GITHUB_ENV"
 
+          CURRENT_STATE_JSON=$(mktemp)
+          az containerapp show --resource-group "$RG" --name "$APP" --output json > "$CURRENT_STATE_JSON"
+          readarray -t CURRENT_REVISION_NAMES < <(python3 - "$CURRENT_STATE_JSON" <<'PY'
+          import json, sys
+          properties=json.load(open(sys.argv[1], encoding="utf-8")).get("properties", {})
+          print(properties.get("latestRevisionName") or "")
+          print(properties.get("latestReadyRevisionName") or "")
+          PY
+          )
+          CURRENT_LATEST="${CURRENT_REVISION_NAMES[0]:-}"
+          CURRENT_READY="${CURRENT_REVISION_NAMES[1]:-}"
+          if [[ -n "$CURRENT_LATEST" ]]; then
+            CURRENT_REVISION_JSON=$(mktemp)
+            if az containerapp revision show --resource-group "$RG" --name "$APP" --revision "$CURRENT_LATEST" --output json > "$CURRENT_REVISION_JSON"; then
+              python3 - "$CURRENT_REVISION_JSON" "$CURRENT_READY" <<'PY'
+          import json, sys
+          revision=json.load(open(sys.argv[1], encoding="utf-8"))
+          p=revision.get("properties", {})
+          containers=p.get("template", {}).get("containers", [])
+          print(json.dumps({
+            "latest_revision":revision.get("name"),
+            "latest_ready_revision":sys.argv[2],
+            "active":p.get("active"),
+            "provisioning_state":p.get("provisioningState"),
+            "health_state":p.get("healthState"),
+            "running_state":p.get("runningState"),
+            "replicas":p.get("replicas"),
+            "image":containers[0].get("image") if containers else None,
+            "provisioning_error":p.get("provisioningError")
+          }))
+          PY
+            fi
+            rm -f "$CURRENT_REVISION_JSON"
+          fi
+          rm -f "$CURRENT_STATE_JSON"
+
           EXISTING_APP_JSON=$(mktemp)
           AZURE_CLI_ERROR=$(mktemp)
           APP_FOUND=false
@@ -122,9 +158,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --output none
           az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
-          az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars \
+          az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --set-env-vars \
             "AZURE_DATABASE_URL=secretref:database-url" \
             --remove-env-vars MCP_ENTRA_CLIENT_ID MCP_ENTRA_TENANT_ID MCP_PUBLIC_URL \
             --output none
@@ -216,8 +251,31 @@ jobs:
             fi
             sleep 5
           done
+          if [[ "$REVISION_READY" != "true" ]]; then
+            if [[ -n "${LATEST_REVISION:-}" ]] && az containerapp revision show --resource-group "$RG" --name "$APP" --revision "$LATEST_REVISION" --output json > "$REVISION_JSON" 2>/dev/null; then
+              python3 - "$REVISION_JSON" "$LATEST_READY_REVISION" <<'PY'
+          import json, sys
+          revision=json.load(open(sys.argv[1], encoding="utf-8"))
+          p=revision.get("properties", {})
+          containers=p.get("template", {}).get("containers", [])
+          print("Failed latest revision: "+json.dumps({
+            "latest_revision":revision.get("name"),
+            "latest_ready_revision":sys.argv[2],
+            "active":p.get("active"),
+            "provisioning_state":p.get("provisioningState"),
+            "health_state":p.get("healthState"),
+            "running_state":p.get("runningState"),
+            "replicas":p.get("replicas"),
+            "image":containers[0].get("image") if containers else None,
+            "provisioning_error":p.get("provisioningError")
+          }))
+          PY
+            fi
+            rm -f "$APP_STATE_JSON" "$REVISION_JSON"
+            echo "::error::The latest Container App revision did not become active and ready with the expected image (latest: ${LATEST_REVISION:-unknown}; ready: ${LATEST_READY_REVISION:-unknown})"
+            exit 1
+          fi
           rm -f "$APP_STATE_JSON" "$REVISION_JSON"
-          [[ "$REVISION_READY" == "true" ]] || { echo "::error::The latest Container App revision did not become active and ready with the expected image (latest: ${LATEST_REVISION:-unknown}; ready: ${LATEST_READY_REVISION:-unknown})"; exit 1; }
           echo "Verified active Container App revision: $DEPLOYED_REVISION" >> "$GITHUB_STEP_SUMMARY"
 
           echo "APP_URL=https://$FQDN" >> "$GITHUB_ENV"
