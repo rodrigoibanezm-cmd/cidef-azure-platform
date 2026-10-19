@@ -123,7 +123,7 @@ try {
   assert.equal(readOnly.rows[0]?.read_only, 'on');
 
   const permissionResult = await client.query(`
-    WITH current_role AS (
+    WITH role_info AS (
       SELECT oid, rolname, rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolcanlogin, rolbypassrls
       FROM pg_roles
       WHERE rolname = current_user
@@ -131,10 +131,7 @@ try {
     settable_roles AS (
       SELECT role_row.*
       FROM pg_roles AS role_row
-      WHERE role_row.rolsuper
-         OR role_row.rolcreatedb
-         OR role_row.rolcreaterole
-         OR pg_has_role(current_user, role_row.oid, 'SET')
+      WHERE pg_has_role(current_user, role_row.oid, 'SET')
     ),
     public_database_privileges AS (
       SELECT
@@ -222,10 +219,10 @@ try {
           'createrole', candidate.rolcreaterole
         ) ORDER BY candidate.rolname), '[]'::json)
         FROM pg_roles AS candidate
-        WHERE candidate.rolsuper OR candidate.rolcreatedb OR candidate.rolcreaterole
+        WHERE (candidate.rolsuper OR candidate.rolcreatedb OR candidate.rolcreaterole)
           AND pg_has_role(current_user, candidate.oid, 'SET')
       ) AS settable_admin_roles
-    FROM current_role
+    FROM role_info
     CROSS JOIN public_database_privileges
     CROSS JOIN public_schema_privileges
     CROSS JOIN public_table_privileges
@@ -446,6 +443,7 @@ try {
     select_1: 'PASS',
     read_only_transaction: 'PASS',
     rollback: 'PASS',
+    postgresql_permissions: permissionReport,
     neon_connection_or_fallback: 'NONE',
     p3_schema: schemaCheck,
   }));
