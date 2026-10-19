@@ -59,6 +59,7 @@ const now=new Date();
     const forum=financeRows.filter(row=>row.entity!=='UNRESOLVED'&&String(row.entity).trim().toUpperCase()==='FORUM').reduce((sum,row)=>sum+row.value,0);
     const other=financeRows.filter(row=>row.entity!=='UNRESOLVED'&&String(row.entity).trim().toUpperCase()!=='FORUM').reduce((sum,row)=>sum+row.value,0);
     assert.equal(forum+other+unresolved,total,'FORUM/other/unresolved classifications do not reconcile');
+    assert.ok(forum+other>0,'No recognized SALES rows carry a resolved financial entity');
     report.push({period:item.period,cutoff:item.cutoff,recognized_sales:total,store_count:stores.size,store_totals:storeRows,
       ufi_ejecutadas_forum:forum,otros_creditos:other,financiera_no_resuelta:unresolved,
       reconciliation:'PASS'});

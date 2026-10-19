@@ -6,11 +6,13 @@ on:
     branches: [main]
     paths:
       - 'lib/ventas/loadVentasRows.js'
+      - 'lib/ventas/ventasContextUtils.js'
       - 'lib/data-floor/sales/contract.js'
       - 'lib/data-floor/sales/dataset.js'
       - 'lib/data-floor/sales/multiObserve.js'
       - 'lib/mcp/server.js'
       - 'scripts/validate-sales-financial-p1.js'
+      - 'test/sales-p1-contract.test.js'
       - '.github/workflows/deploy-motor-test-azure.yml'
 
 permissions:
@@ -187,11 +189,14 @@ jobs:
       - name: Install MCP client dependencies for anonymous integration checks
         run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 zod@3.25.76 pg@8.16.3
 
+      - name: Verify SALES recognition preserves financial entity
+        run: node --test test/sales-p1-contract.test.js
+
       - name: Verify anonymous remote MCP transport and 12 tools
         run: MCP_SMOKE_URL="$APP_URL/api/mcp" node motor-test-azure/smoke-test.js
 
       - name: Reconcile SALES recognized VINs by store and financing entity in Azure PostgreSQL
-        run: MCP_URL="$APP_URL/api/mcp" node scripts/validate-sales-financial-p1.js
+        run: node scripts/validate-sales-financial-p1.js
 
       - name: Validate live Cómo vamos P1/P2 results and P3 trace against Azure PostgreSQL
         run: node scripts/validate-como-vamos-api.js
