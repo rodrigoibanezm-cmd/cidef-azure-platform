@@ -51,9 +51,13 @@ jobs:
           # GitHub OIDC is used only for Azure deployment. ChatGPT users authenticate with delegated OAuth at the MCP endpoint.
           echo "IDENTITY_ID=$IDENTITY_ID" >> "$GITHUB_ENV"
 
+          az containerapp show --resource-group "$RG" --name "$APP" --output none 2>/dev/null || {
+            echo "::error::Existing motor-test Container App was not found; refusing to create infrastructure or assign ACR roles"
+            exit 1
+          }
           EXISTING_APP_JSON=$(mktemp)
-          if az containerapp show --resource-group "$RG" --name "$APP" --output json > "$EXISTING_APP_JSON" 2>/dev/null; then
-            python3 - "$EXISTING_APP_JSON" "$ACA_ENV_ID" "$IDENTITY_ID" <<'PY'
+          az containerapp show --resource-group "$RG" --name "$APP" --output json > "$EXISTING_APP_JSON"
+          python3 - "$EXISTING_APP_JSON" "$ACA_ENV_ID" "$IDENTITY_ID" <<'PY'
           import json, sys
           app=json.load(open(sys.argv[1], encoding="utf-8"))
           expected_env, expected_identity=sys.argv[2:]
@@ -70,7 +74,6 @@ jobs:
           if not any(r.get("server", "").lower() == "cidefprodacr.azurecr.io" and r.get("identity") == expected_identity for r in registries):
               raise SystemExit("::error::Existing motor-test app does not use the reusable ACR identity")
           PY
-          fi
           rm -f "$EXISTING_APP_JSON"
 
       - name: Build and push the isolated motor-test image to the existing ACR
@@ -87,27 +90,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if az containerapp show --resource-group "$RG" --name "$APP" --output none 2>/dev/null; then
-            az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --output none
-            az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
-            az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars \
-              "AZURE_DATABASE_URL=secretref:database-url" \
-              "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" \
-              "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
-              "MCP_PUBLIC_URL=https://pending.invalid" \
-              --output none
-          else
-            # One new Container App is required for an independent endpoint; reuse the existing environment, ACR, UAI and database.
-            az containerapp create --resource-group "$RG" --name "$APP" --environment "$ACA_ENV" \
-              --image "$IMAGE" --target-port 3000 --ingress external \
-              --registry-server "$ACR" --registry-identity "$IDENTITY_ID" --user-assigned "$IDENTITY_ID" \
-              --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1Gi \
-              --secrets "database-url=$AZURE_DATABASE_URL" \
-              --env-vars "AZURE_DATABASE_URL=secretref:database-url" \
-                "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" \
-                "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
-                "MCP_PUBLIC_URL=https://pending.invalid"
-          fi
+          az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --output none
+          az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
+          az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars \
+            "AZURE_DATABASE_URL=secretref:database-url" \
+            "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" \
+            "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
+            --output none
 
           for attempt in {1..36}; do
             STATE=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.provisioningState --output tsv)
@@ -119,7 +108,29 @@ jobs:
 
           FQDN=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.configuration.ingress.fqdn --output tsv)
           [[ -n "$FQDN" ]] || { echo "::error::The independent Container App has no ingress FQDN"; exit 1; }
-          az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars "MCP_PUBLIC_URL=https://$FQDN" --output none
+          ERROR_FILE=$(mktemp)
+          UPDATED=false
+          for attempt in 1 2 3 4; do
+            if az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars "MCP_PUBLIC_URL=https://$FQDN" --output none 2>"$ERROR_FILE"; then
+              UPDATED=true
+              break
+            fi
+            if grep -Eqi 'Service Unavailable|HTTPError.*503|status code: 503' "$ERROR_FILE"; then
+              if [[ "$attempt" -lt 4 ]]; then
+                echo "ARM returned HTTP 503 while setting MCP_PUBLIC_URL; retry $attempt/4."
+                sleep $((attempt * 10))
+                continue
+              fi
+              echo "::error::ARM remained unavailable after four attempts to set MCP_PUBLIC_URL"
+              rm -f "$ERROR_FILE"
+              exit 1
+            fi
+            echo "::error::Azure failed to set MCP_PUBLIC_URL with a non-transient error; see the Azure CLI step diagnostics"
+            rm -f "$ERROR_FILE"
+            exit 1
+          done
+          rm -f "$ERROR_FILE"
+          [[ "$UPDATED" == "true" ]] || { echo "::error::MCP_PUBLIC_URL was not updated"; exit 1; }
           echo "APP_URL=https://$FQDN" >> "$GITHUB_ENV"
           echo "Independent MCP endpoint: https://$FQDN/api/mcp" >> "$GITHUB_STEP_SUMMARY"
 
