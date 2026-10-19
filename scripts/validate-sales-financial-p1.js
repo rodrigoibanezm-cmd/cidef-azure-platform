@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { observeSalesMany } from '../lib/data-floor/sales/multiObserve.js';
 
 if(!process.env.AZURE_DATABASE_URL)throw new Error('AZURE_DATABASE_URL is required');
-function structured(result,label){
-  assert.notEqual(result.isError,true,label+' returned an MCP error: '+JSON.stringify(result.content??result));
-  assert.ok(result.structuredContent,label+' returned no structured content');
-  return result.structuredContent;
-}
 function evidenceFor(result,kind){
   const item=result.results.find(entry=>entry.operation.kind===kind);
   assert.ok(item,'Missing '+kind+' evidence');
@@ -31,8 +25,7 @@ function totals(rows){
   for(const row of rows)output.set(row.store,(output.get(row.store)??0)+row.value);
   return output;
 }
-try{
-  const now=new Date();
+const now=new Date();
   const currentPeriod=now.toISOString().slice(0,7);
   const currentCutoff=now.toISOString().slice(0,10);
   const previousEnd=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),0));
