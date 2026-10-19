@@ -91,10 +91,22 @@ try {
   await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), transportOptions));
 
   const listed = await client.listTools();
-  const toolNames = new Set(listed.tools.map((tool) => tool.name));
-  for (const name of ['data_describe', 'data_observe', 'p2_discover', 'p2_describe', 'p2_execute', 'run_trace']) {
-    assert.ok(toolNames.has(name), 'Required MCP tool is missing: ' + name);
-  }
+  const toolNames = listed.tools.map((tool) => tool.name).sort();
+  const expectedTools = [
+    'data_describe',
+    'data_inspect',
+    'data_fetch',
+    'data_resolve',
+    'data_observe',
+    'crm_observe_many',
+    'sales_observe_many',
+    'sales_observe_windows',
+    'p2_discover',
+    'p2_describe',
+    'p2_execute',
+    'run_trace',
+  ].sort();
+  assert.deepEqual(toolNames, expectedTools, 'The deployed MCP tool list differs from the original 12 tools.');
 
   const salesDescriptionResult = await client.callTool({
     name: 'data_describe',
