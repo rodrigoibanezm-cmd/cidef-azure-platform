@@ -46,6 +46,42 @@ jobs:
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
+      - name: Measure live projection dashboard baseline
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          base = "https://cidef-inteligencia-comercial.calmforest-1c67ab46.chilecentral.azurecontainerapps.io"
+          today = datetime.now(ZoneInfo("America/Santiago")).date()
+          monday = today - timedelta(days=today.weekday())
+          def get(path):
+              start = time.perf_counter()
+              with urllib.request.urlopen(base + path, timeout=240) as response:
+                  body = response.read()
+                  if response.status != 200: raise RuntimeError(f"HTTP {response.status}: {path}")
+              return (time.perf_counter() - start) * 1000, json.loads(body)
+          branches_ms, branches = get("/api/weekly-projections/sucursales")
+          store = str(branches["sucursales"][0]["sucursal_id"])
+          date, week = today.isoformat(), monday.isoformat()
+          paths = [
+              ("company_admin", f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}"),
+              ("store_admin", f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}&sucursal_id={store}"),
+              ("company_finance", f"/api/weekly-projections/company-finance?cutoff_date={date}"),
+              ("store_finance", f"/api/weekly-projections/company-finance?cutoff_date={date}&sucursal_id={store}"),
+              ("seller_detail", f"/api/weekly-projections/forum-sellers?sucursal_id={store}&cutoff_date={date}"),
+          ]
+          timings = {"branch_list_ms": round(branches_ms)}
+          for name, path in paths:
+              elapsed, _ = get(path)
+              timings[name + "_ms"] = round(elapsed)
+          print("Before snapshot deployment (live Azure, first-load queries): " + json.dumps(timings))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("### Proyección admin: tiempos antes del snapshot\n\n")
+              summary.write("```json\n" + json.dumps(timings, indent=2) + "\n```\n")
+          PY
+
       - name: Apply projection CRM uniqueness migration
         shell: bash
         env:
@@ -64,6 +100,8 @@ jobs:
             --file frontend/scripts/allow-multiple-projections-per-crm.sql
           psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
             --file frontend/scripts/verify-multiple-projections-per-crm.sql
+          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+            --file frontend/scripts/create-weekly-projection-admin-snapshots.sql
 
       - name: Deploy frontend to existing Azure Container Apps environment
         shell: bash
@@ -134,3 +172,56 @@ jobs:
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/sucursales" --output /dev/null
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/modelos" --output /dev/null
           echo "Home, existing modules, projections pages, Azure PostgreSQL health, branch and model reads succeeded." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify projection snapshots and navigation cache
+        shell: bash
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+          base = "https://cidef-inteligencia-comercial.calmforest-1c67ab46.chilecentral.azurecontainerapps.io"
+          today = datetime.now(ZoneInfo("America/Santiago")).date()
+          monday = today - timedelta(days=today.weekday())
+          def get(path):
+              start = time.perf_counter()
+              with urllib.request.urlopen(base + path, timeout=240) as response:
+                  data = json.loads(response.read())
+                  if response.status != 200 or not data.get("ok"):
+                      raise RuntimeError(f"HTTP/API failure for {path}: {data}")
+              return round((time.perf_counter() - start) * 1000), data
+          _, branches = get("/api/weekly-projections/sucursales")
+          store = str(branches["sucursales"][0]["sucursal_id"])
+          date, week = today.isoformat(), monday.isoformat()
+          paths = {
+              "company_admin": f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}",
+              "store_admin": f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}&sucursal_id={store}",
+              "company_finance": f"/api/weekly-projections/company-finance?cutoff_date={date}",
+              "store_finance": f"/api/weekly-projections/company-finance?cutoff_date={date}&sucursal_id={store}",
+              "seller_detail": f"/api/weekly-projections/forum-sellers?sucursal_id={store}&cutoff_date={date}",
+          }
+          timings = {}
+          for name, path in paths.items():
+              refresh_path = path + ("&" if "?" in path else "?") + "refresh=1"
+              refresh_ms, refreshed = get(refresh_path)
+              navigation_ms, reused = get(path)
+              if reused.get("snapshot", {}).get("cache_hit") is not True:
+                  raise RuntimeError(f"Expected a daily snapshot cache hit after forced calculation: {name}")
+              if not refreshed.get("snapshot", {}).get("updated_at") or not reused.get("snapshot", {}).get("updated_at"):
+                  raise RuntimeError(f"Snapshot timestamp missing: {name}")
+              timings[name] = {"refresh_ms": refresh_ms, "navigation_ms": navigation_ms, "cache_hit": True, "updated_at": reused["snapshot"]["updated_at"]}
+          company_return_ms, company_return = get(paths["company_admin"])
+          if company_return.get("snapshot", {}).get("cache_hit") is not True:
+              raise RuntimeError("Company view recalculated after navigating back from Store")
+          timings["company_return_after_store"] = {"navigation_ms": company_return_ms, "cache_hit": True}
+          print(json.dumps(timings, indent=2))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("### Proyección admin: snapshots y tiempos después del deploy\n\n```json\n")
+              summary.write(json.dumps(timings, indent=2) + "\n```\n")
+          PY
+          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align \
+            --command "SELECT count(*) >= 5 AND count(DISTINCT dimension) >= 3 FROM weekly_projection_admin_snapshots WHERE snapshot_day=(now() AT TIME ZONE 'America/Santiago')::date AND report_key IN ('admin','company-finance','forum-sellers')" | grep -qx t
+          echo "Daily snapshots persisted for company, store and seller dimensions; repeat reads and company-after-store navigation hit the existing cache." >> "$GITHUB_STEP_SUMMARY"
