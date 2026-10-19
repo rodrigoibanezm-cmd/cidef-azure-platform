@@ -1,0 +1,184 @@
+name: Deploy independent motor-test MCP to Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-and-verify:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 60
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+      RG: rg-cidef-prod
+      SOURCE_APP: cidef-pg-mcp
+      APP: cidef-motor-test-azure
+      ACR: cidefprodacr.azurecr.io
+      MCP_CLIENT_ID: 71a36bc5-b850-43bf-be67-e28568ef0d58
+      MCP_TENANT_ID: 1a38830c-0239-4e97-9b1d-bededd560934
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Azure login via existing GitHub OIDC identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preflight existing resources, DB secret and MCP authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${AZURE_DATABASE_URL:-}" ]] || { echo "::error::AZURE_DATABASE_URL is missing from Production"; exit 1; }
+
+          az extension add --name containerapp --upgrade --yes
+          SOURCE_JSON=$(mktemp)
+          az containerapp show --resource-group "$RG" --name "$SOURCE_APP" --output json > "$SOURCE_JSON"
+          ACA_ENV_ID=$(python3 - "$SOURCE_JSON" <<'PY'
+          import json, sys
+          app=json.load(open(sys.argv[1], encoding="utf-8"))
+          print(app.get("properties", {}).get("managedEnvironmentId", ""))
+          PY
+          )
+          rm -f "$SOURCE_JSON"
+          [[ -n "$ACA_ENV_ID" ]] || { echo "::error::Existing Container Apps environment could not be resolved from cidef-pg-mcp"; exit 1; }
+          ACA_ENV="${ACA_ENV_ID##*/}"
+
+          IDENTITY_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query id --output tsv)
+          PRINCIPAL_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query principalId --output tsv)
+          ACR_ID=$(az acr show --name cidefprodacr --resource-group "$RG" --query id --output tsv)
+          [[ -n "$IDENTITY_ID" && -n "$PRINCIPAL_ID" && -n "$ACR_ID" ]] || { echo "::error::Existing ACR or user-assigned identity was not found"; exit 1; }
+          ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --query "[?roleDefinitionName=='AcrPull'] | length(@)" --output tsv)
+          [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Existing AcrPull assignment for id-cidef-azure-pg-mcp is missing; no role assignment was attempted"; exit 1; }
+
+          # The GitHub OIDC identity must already hold an app role accepted by the existing Entra-protected MCP.
+          MCP_ACCESS_TOKEN=$(az account get-access-token --resource "api://$MCP_CLIENT_ID" --query accessToken --output tsv)
+          [[ -n "$MCP_ACCESS_TOKEN" ]] || { echo "::error::Could not obtain an Entra token for the existing motor-test API"; exit 1; }
+          echo "::add-mask::$MCP_ACCESS_TOKEN"
+          python3 - "$MCP_ACCESS_TOKEN" <<'PY'
+          import base64, json, sys
+          try:
+              token=sys.argv[1]
+              payload=token.split(".")[1]
+              claims=json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+              roles=claims.get("roles", [])
+              allowed=any(role.lower() in {"pg.read","pg_read","pg.write","pg_write","pg.admin","pg_admin"} for role in roles)
+          except Exception:
+              allowed=False
+          if not allowed:
+              raise SystemExit("::error::The OIDC identity lacks an existing pg.read/pg.write/pg.admin Entra app role; no deployment was started")
+          PY
+          echo "MCP_ACCESS_TOKEN=$MCP_ACCESS_TOKEN" >> "$GITHUB_ENV"
+          echo "IDENTITY_ID=$IDENTITY_ID" >> "$GITHUB_ENV"
+          echo "ACA_ENV=$ACA_ENV" >> "$GITHUB_ENV"
+
+          EXISTING_APP_JSON=$(mktemp)
+          if az containerapp show --resource-group "$RG" --name "$APP" --output json > "$EXISTING_APP_JSON" 2>/dev/null; then
+            python3 - "$EXISTING_APP_JSON" "$ACA_ENV_ID" "$IDENTITY_ID" <<'PY'
+          import json, sys
+          app=json.load(open(sys.argv[1], encoding="utf-8"))
+          expected_env, expected_identity=sys.argv[2:]
+          properties=app.get("properties", {})
+          identity=app.get("identity", {}).get("userAssignedIdentities", {})
+          ingress=properties.get("configuration", {}).get("ingress", {})
+          registries=properties.get("configuration", {}).get("registries", [])
+          if properties.get("managedEnvironmentId") != expected_env:
+              raise SystemExit("::error::Existing motor-test app uses a different Container Apps environment; refusing to alter it")
+          if expected_identity not in identity:
+              raise SystemExit("::error::Existing motor-test app is not attached to the reusable image-pull identity")
+          if not ingress.get("external") or ingress.get("targetPort") != 3000:
+              raise SystemExit("::error::Existing motor-test app ingress is not the expected protected port 3000; refusing to change networking")
+          if not any(r.get("server", "").lower() == "cidefprodacr.azurecr.io" and r.get("identity") == expected_identity for r in registries):
+              raise SystemExit("::error::Existing motor-test app does not use the reusable ACR identity")
+          PY
+          fi
+          rm -f "$EXISTING_APP_JSON"
+
+      - name: Build and push the isolated motor-test image to the existing ACR
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name cidefprodacr
+          IMAGE="$ACR/cidef-motor-test-azure:$GITHUB_SHA"
+          docker build --file Dockerfile.motor-test-azure --tag "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Create or update only the independent motor-test Container App
+        shell: bash
+        run: |
+          set -euo pipefail
+          if az containerapp show --resource-group "$RG" --name "$APP" --output none 2>/dev/null; then
+            az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --output none
+            az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
+            az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars \
+              "AZURE_DATABASE_URL=secretref:database-url" \
+              "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" \
+              "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
+              "MCP_PUBLIC_URL=https://pending.invalid" \
+              --output none
+          else
+            # One new Container App is required for an independent endpoint; reuse the existing environment, ACR, UAI and database.
+            az containerapp create --resource-group "$RG" --name "$APP" --environment "$ACA_ENV" \
+              --image "$IMAGE" --target-port 3000 --ingress external \
+              --registry-server "$ACR" --registry-identity "$IDENTITY_ID" --user-assigned "$IDENTITY_ID" \
+              --min-replicas 0 --max-replicas 1 \
+              --secrets "database-url=$AZURE_DATABASE_URL" \
+              --env-vars "AZURE_DATABASE_URL=secretref:database-url" \
+                "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" \
+                "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
+                "MCP_PUBLIC_URL=https://pending.invalid"
+          fi
+
+          for attempt in {1..36}; do
+            STATE=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.provisioningState --output tsv)
+            [[ "$STATE" == "Succeeded" ]] && break
+            [[ "$STATE" != "Failed" ]] || { echo "::error::motor-test Container App provisioning failed"; exit 1; }
+            sleep 5
+          done
+          [[ "$STATE" == "Succeeded" ]] || { echo "::error::motor-test Container App provisioning timed out"; exit 1; }
+
+          FQDN=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.configuration.ingress.fqdn --output tsv)
+          [[ -n "$FQDN" ]] || { echo "::error::The independent Container App has no ingress FQDN"; exit 1; }
+          az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars "MCP_PUBLIC_URL=https://$FQDN" --output none
+          echo "APP_URL=https://$FQDN" >> "$GITHUB_ENV"
+          echo "Independent MCP endpoint: https://$FQDN/api/mcp" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify health, Azure PostgreSQL readiness and anonymous rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          HEALTH=""
+          READY=""
+          for attempt in {1..36}; do
+            HEALTH=$(curl --silent --output /dev/null --write-out '%{http_code}' "$APP_URL/healthz" || true)
+            READY=$(curl --silent "$APP_URL/readyz" || true)
+            [[ "$HEALTH" == "200" && "$READY" == *'"database":"connected"'* ]] && break
+            sleep 5
+          done
+          [[ "$HEALTH" == "200" ]] || { echo "::error::motor-test health check failed"; exit 1; }
+          [[ "$READY" == *'"database":"connected"'* ]] || { echo "::error::SELECT 1 readiness check against Azure PostgreSQL failed"; exit 1; }
+
+          META=$(curl --silent --fail "$APP_URL/.well-known/oauth-protected-resource")
+          [[ "$META" == *'"authorization_servers"'* ]] || { echo "::error::Entra resource metadata is missing"; exit 1; }
+          STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST \
+            --header 'content-type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+            "$APP_URL/api/mcp")
+          [[ "$STATUS" == "401" ]] || { echo "::error::Anonymous MCP request returned HTTP $STATUS (expected 401)"; exit 1; }
+          echo "Health, PostgreSQL SELECT 1, OAuth metadata and anonymous rejection passed." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install MCP client dependencies for authenticated integration checks
+        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 jose@6.1.0 zod@3.25.76 pg@8.16.3
+
+      - name: Validate authenticated tool listing, SALES P1, P2 determinism and P3 trace
+        env:
+          MCP_URL: ${{ env.APP_URL }}/api/mcp
+          MCP_ACCESS_TOKEN: ${{ env.MCP_ACCESS_TOKEN }}
+        run: node scripts/validate-motor-test-azure-p2-p3.js
