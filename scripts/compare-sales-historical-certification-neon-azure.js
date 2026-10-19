@@ -192,7 +192,7 @@ function runBackend(backend, connectionValue) {
     maxBuffer: 5 * 1024 * 1024,
   });
 
-  const line = String(child.stdout ?? '').trim().split(/\\r?\\n/).at(-1);
+  const line = String(child.stdout ?? '').trim().split(String.fromCharCode(10)).at(-1);
   let result;
   try {
     result = JSON.parse(line);
@@ -261,7 +261,7 @@ async function main() {
       '',
       'Full sanitized JSON report is in the job log.',
       '',
-    ].join('\\n');
+    ].join(String.fromCharCode(10));
     await import('node:fs/promises').then(({ appendFile }) =>
       appendFile(process.env.GITHUB_STEP_SUMMARY, summary));
   }
