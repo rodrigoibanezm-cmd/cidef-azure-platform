@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateVentasMonthlyActual } from '../lib/motors/ventas-monthly-actual-v01.js';
+import { recognizedSale } from '../lib/ventas/ventasContextUtils.js';
 
 test('SALES monthly engine preserves its certified result contract', () => {
   const result = calculateVentasMonthlyActual({
@@ -39,4 +40,18 @@ test('SALES monthly engine refuses a target beyond the cutoff', async () => {
     ventasMonthlyActualV01({ target_month: '2026-10', cutoff_month: '2026-09' }),
     /target_month must be <= cutoff_month/,
   );
+});
+
+test('SALES VIN recognition carries the selected row financing entity unchanged', () => {
+  const sale = recognizedSale({
+    id: 19,
+    entidad_financiera: ' FORUM ',
+  }, {
+    raw: '2026-09-10',
+    date: new Date('2026-09-10T00:00:00.000Z'),
+  }, 'vin_last_fecha_factura', 'VIN-1');
+
+  assert.equal(sale.source_id, 19);
+  assert.equal(sale.vin, 'VIN-1');
+  assert.equal(sale.entidad_financiera, ' FORUM ');
 });
