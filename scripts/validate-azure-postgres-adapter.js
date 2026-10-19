@@ -241,9 +241,9 @@ try {
     ...permissionResult.rows[0],
     direct_role_memberships: roleMemberships.rows,
     isolation_assessment: {
-      staging_role_would_inherit_public_connect: permissionResult.rows[0]?.public_can_connect_to_current_database,
-      staging_role_would_inherit_public_table_select: Number(permissionResult.rows[0]?.public_selectable_relations ?? 0) > 0,
-      production_data_readable_via_public_grants:
+      new_role_would_inherit_public_connect_in_connected_database: permissionResult.rows[0]?.public_can_connect_to_current_database,
+      new_role_would_inherit_public_table_select_in_connected_database: Number(permissionResult.rows[0]?.public_selectable_relations ?? 0) > 0,
+      data_readable_via_public_grants_in_connected_database:
         Number(permissionResult.rows[0]?.public_selectable_relations ?? 0) > 0,
     },
   };
