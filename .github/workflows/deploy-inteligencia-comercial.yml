@@ -84,23 +84,29 @@ jobs:
                   body = response.read()
                   if response.status != 200: raise RuntimeError(f"HTTP {response.status}: {path}")
               return (time.perf_counter() - start) * 1000, json.loads(body)
-          branches_ms, branches = get("/api/weekly-projections/sucursales")
-          store = str(branches["sucursales"][0]["sucursal_id"])
-          date, week = today.isoformat(), monday.isoformat()
-          paths = [
-              ("company_admin", f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}"),
-              ("store_admin", f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}&sucursal_id={store}"),
-              ("company_finance", f"/api/weekly-projections/company-finance?cutoff_date={date}"),
-              ("store_finance", f"/api/weekly-projections/company-finance?cutoff_date={date}&sucursal_id={store}"),
-              ("seller_detail", f"/api/weekly-projections/forum-sellers?sucursal_id={store}&cutoff_date={date}"),
-          ]
-          timings = {"branch_list_ms": round(branches_ms)}
-          for name, path in paths:
-              elapsed, _ = get(path)
-              timings[name + "_ms"] = round(elapsed)
-          print("Before snapshot deployment (live Azure, first-load queries): " + json.dumps(timings))
+          timings = {}
+          try:
+              branches_ms, branches = get("/api/weekly-projections/sucursales")
+              store = str(branches["sucursales"][0]["sucursal_id"])
+              date, week = today.isoformat(), monday.isoformat()
+              paths = [
+                  ("company_admin", f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}"),
+                  ("store_admin", f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}&sucursal_id={store}"),
+                  ("company_finance", f"/api/weekly-projections/company-finance?cutoff_date={date}"),
+                  ("store_finance", f"/api/weekly-projections/company-finance?cutoff_date={date}&sucursal_id={store}"),
+                  ("seller_detail", f"/api/weekly-projections/forum-sellers?sucursal_id={store}&cutoff_date={date}"),
+              ]
+              timings["branch_list_ms"] = round(branches_ms)
+              for name, path in paths:
+                  elapsed, _ = get(path)
+                  timings[name + "_ms"] = round(elapsed)
+          except Exception as error:
+              timings["baseline_unavailable"] = str(error)
+          print("Live projection dashboard baseline: " + json.dumps(timings))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("### Proyección admin: tiempos antes del snapshot\n\n")
+              summary.write("### Proyección admin: medición previa\n\n")
+              if "baseline_unavailable" in timings:
+                  summary.write("La versión previa no respondió durante el rollout: " + timings["baseline_unavailable"] + "\n")
               summary.write("```json\n" + json.dumps(timings, indent=2) + "\n```\n")
           PY
 
