@@ -75,13 +75,10 @@ function storeSales(context) {
 }
 
 function redact(error) {
-  let message = String(error?.message ?? error);
-  for (const key of ['AZURE_DATABASE_URL', 'DATABASE_URL', 'POSTGRES_URL', 'NEON_DATABASE_URL']) {
-    const value = process.env[key];
-    if (value) message = message.split(value).join('[redacted]');
-  }
-  message = message.replace(/postgres(?:ql)?:\\/\\/[^\\s"'\\]}]+/gi, '[redacted connection string]');
-  return error?.code ? error.code + ': ' + message : message;
+  return {
+    name: String(error?.name ?? 'Error'),
+    code: error?.code ?? null,
+  };
 }
 
 let report;
@@ -144,7 +141,7 @@ try {
   failure = redact(error);
 } finally {
   await closeRvmDb().catch((error) => {
-    failure ??= 'Database cleanup failed: ' + redact(error);
+    failure ??= { name: 'CleanupError', code: error?.code ?? null };
   });
 }
 
@@ -204,7 +201,7 @@ function runBackend(backend, connectionValue) {
   }
   if (child.error) throw new Error(`${backend} diagnostic process could not start.`);
   if (!result?.ok || child.status !== 0) {
-    throw new Error(`${backend} diagnostic was blocked: ${result?.error ?? 'unknown read-only diagnostic error'}`);
+    throw new Error(`${backend} diagnostic was blocked (error ${result?.error?.code ?? result?.error?.name ?? 'unknown'}).`);
   }
   return result;
 }
@@ -271,14 +268,13 @@ async function main() {
 }
 
 main().catch((error) => {
-  const message = String(error?.message ?? error).replace(
-    /postgres(?:ql)?:\\/\\/[^\\s"'\\]}]+/gi,
-    '[redacted connection string]',
-  );
   console.error(JSON.stringify({
     diagnostic: 'sales_historical_certification_neon_vs_azure',
     status: 'BLOCKED',
-    error: message,
+    error: {
+      name: String(error?.name ?? 'Error'),
+      code: error?.code ?? null,
+    },
   }));
   process.exitCode = 1;
 });
