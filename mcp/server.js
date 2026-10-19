@@ -164,7 +164,7 @@ function makeServer(principal) {
         cutoff: z.string().optional(),
         period_from: z.string().optional(),
         period_to: z.string().optional(),
-        dimension: z.enum(["MODEL", "STORE", "SELLER", "NETWORK"]).optional(),
+        dimension: z.enum(["MODEL", "STORE", "SELLER", "NETWORK", "FINANCIAL_ENTITY"]).optional(),
         filters: z.record(z.string(), z.unknown()).optional(),
       }
     }, async (input) => {
@@ -178,13 +178,13 @@ function makeServer(principal) {
       }
     });
     server.registerTool("sales_observe_many", {
-      description: "Return compatible certified SALES P1 observations for one explicit period and daily cutoff. BRAND returns a certified canonical brand split including unresolved identities; TOTAL returns the company total.",
+      description: "Return compatible certified SALES P1 observations for one explicit period and daily cutoff. STORE_FINANCIAL_ENTITY preserves ventas_raw.entidad_financiera on each recognized sale and returns the certified store-by-financier split; exact FORUM is UFI executed, other resolved entities are Otros créditos, and missing entities remain unresolved. TOTAL and STORE reconcile the same recognized VIN sales.",
       inputSchema: {
         period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
         cutoff: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-\d{2}$/),
         commercial_universe: z.enum(["COMPANY", "OWN_STORES", "DEALERS"]).optional(),
         operations: z.array(z.object({
-          kind: z.enum(["TOTAL", "BRAND", "BRAND_NETWORK", "MODEL_NETWORK_BY_BRAND"]),
+          kind: z.enum(["TOTAL", "STORE", "STORE_FINANCIAL_ENTITY", "BRAND", "BRAND_NETWORK", "MODEL_NETWORK_BY_BRAND"]),
           brand_id: z.union([z.string(), z.number()]).optional(),
         }).strict()).min(1),
       }
