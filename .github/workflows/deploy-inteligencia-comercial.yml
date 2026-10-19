@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="cidefprodacr.azurecr.io/cidef-inteligencia-comercial:${GITHUB_SHA}"
+          IMAGE="cidefprodacr.azurecr.io/cidef-inteligencia-comercial:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           az acr login --name cidefprodacr
           docker build -f frontend/Dockerfile -t "$IMAGE" frontend
           docker push "$IMAGE"
