@@ -65,7 +65,7 @@ async function observe(runId, source, input) {
   }
 }
 function contractRef(evidence) {
-  return { source: evidence.source, contract: evidence.evidence_contract, version: evidence.evidence_version, evidence_id: evidence.evidence_id };
+  return { source: evidence.source ?? null, contract: evidence.evidence_contract ?? null, version: evidence.evidence_version ?? null, evidence_id: evidence.evidence_id };
 }
 function cutoffOf(evidence) {
   return evidence?.temporal?.cutoff ?? evidence?.temporal?.to ?? evidence?.temporal?.snapshot_date ?? evidence?.universe?.snapshot_date ?? null;
@@ -76,9 +76,9 @@ function periodRow(period, cutoff, values, evidence) {
 function unavailable(id, period, error) {
   return { id, status: error?.message || 'NOT_CERTIFIED', certified: false, period, unit: id === 'rvm_share' ? 'percent' : 'unit', values: null, series: [], cutoff: null, source: null, evidence_id: null, evidence: [], limitations: [error?.message || 'NO_CERTIFIED_EVIDENCE'] };
 }
-function ready(id, unit, period, values, series, evidence, cutoff, source, limitations = []) {
-  const all = [...new Map(evidence.filter(Boolean).map(item => [item.evidence_id, item])).values()];
-  return { id, status: 'CERTIFIED', certified: true, unit, period, values, series, cutoff, source, evidence_id: all[0]?.evidence_id ?? null, evidence: all.map(contractRef), limitations };
+function ready(id, unit, period, values, series, evidence, cutoff, source, limitations = [], certification = {}) {
+  const all = [...new Map(evidence.filter(item => item?.evidence_id).map(item => [item.evidence_id, item])).values()];
+  return { id, status: 'CERTIFIED', certified: true, unit, period, values, series, cutoff, source, evidence_id: all[0]?.evidence_id ?? null, evidence_ids: all.map(item => item.evidence_id), evidence: all.map(contractRef), certification, limitations };
 }
 async function salesIndicator(runId, period, periods) {
   const current = await observe(runId, 'SALES', { measure: 'VIN_SALES', evidence_shape: 'CUMULATIVE_PERIOD_OBSERVATION', period, filters: { commercial_universe: 'COMPANY' } });
@@ -97,7 +97,9 @@ async function salesIndicator(runId, period, periods) {
   return ready('sales', current.measure.unit, period, { company: valueOf(current), ...currentBrandValues }, periods.map(p => byPeriod.get(p)), [current, currentBrands, ...[...byPeriod.values()].flatMap(row => row.evidence_ids.map(id => ({ evidence_id: id })))], currentCutoff, 'SALES P1 · ventas VIN reconocidas');
 }
 async function forumIndicator(runId, id, period, periods, measure, latestSnapshot) {
-  const latest = monthParts(period).year === Number(String(latestSnapshot).slice(0, 4)) && period === String(latestSnapshot).slice(0, 7);
+  const localPeriod = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' }).slice(0, 7);
+  const latest = period === localPeriod;
+  if (latest && (!latestSnapshot || !String(latestSnapshot).startsWith(period))) throw new Error('FORUM_CURRENT_CUTOFF_UNAVAILABLE');
   const day = latest ? cutoffDay(latestSnapshot) : 31;
   const byPeriod = new Map();
   for (const itemPeriod of periods) {
@@ -117,7 +119,7 @@ async function rvmEvidence(runId, period, filters = {}) {
   return { total, brands, values: { company: valueOf(total), ...brandValues(brands, 'RVM') }, cutoff: cutoffOf(total) };
 }
 async function p2Share(runId, period, companyBrands, label) {
-  const filters = { data_status: 'CONSOLIDATED' };
+  const filters = {};
   const universe = await observe(runId, 'RVM', { measure: 'RVM_UNITS', evidence_shape: 'QUANTITATIVE_OBSERVATION', period, filters });
   const part = await observe(runId, 'RVM', { measure: 'RVM_UNITS', evidence_shape: 'QUANTITATIVE_OBSERVATION', period, filters: { ...filters, brand: companyBrands } });
   const refs = { part: part.evidence_id, universe: universe.evidence_id };
@@ -141,7 +143,7 @@ async function rvmShareIndicator(runId, period, periods) {
     series.push(row);
     if (itemPeriod === period) current = { company, foton, dongfeng, row };
   }
-  return ready('rvm_share', 'percent', period, { company: current.company.percentage, foton: current.foton.percentage, dongfeng: current.dongfeng.percentage }, series.map(({ p2_evidence, ...row }) => row), [...current.company.evidence, ...current.foton.evidence, ...current.dongfeng.evidence], current.row.cutoff, 'RVM P1 + p2.part_to_universe_ratio v0.1.0', ['DONGFENG_RVM_SOURCE_LABEL_DFM']);
+  return ready('rvm_share', 'percent', period, { company: current.company.percentage, foton: current.foton.percentage, dongfeng: current.dongfeng.percentage }, series.map(({ p2_evidence, ...row }) => row), [...current.company.evidence, ...current.foton.evidence, ...current.dongfeng.evidence], current.row.cutoff, 'RVM P1 + p2.part_to_universe_ratio v0.1.0', ['DONGFENG_RVM_SOURCE_LABEL_DFM'], { authority: 'P2_EXECUTED', unit_id: 'p2.part_to_universe_ratio', contract_version: '0.1.0', output: current.company.p2.result });
 }
 
 export async function buildComoVamos(period) {
@@ -149,24 +151,24 @@ export async function buildComoVamos(period) {
   const run_id = 'como-vamos-' + randomUUID();
   const periods = [shiftMonth(period, -3), shiftMonth(period, -2), shiftMonth(period, -1), period];
   const indicators = [];
+  let latestSnapshot = null;
+  try {
+    const snapshot = await observe(run_id, 'FORUM', { measure: 'PRECURSE' });
+    const brands = await observe(run_id, 'FORUM', { measure: 'PRECURSE', evidence_shape: 'DIMENSIONAL_QUANTITATIVE_DATASET', dimension: 'BRAND' });
+    latestSnapshot = cutoffOf(snapshot);
+    indicators.push(ready('precurse', 'operation', period, { company: valueOf(snapshot), ...brandValues(brands, 'FORUM') }, [], [snapshot, brands], latestSnapshot, 'FORUM P1 · PRECURSE snapshot stock', ['STOCK_OF_LATEST_SNAPSHOT', 'NO_PERIOD_SERIES']));
+  } catch (error) { indicators.push(unavailable('precurse', period, error)); }
   for (const task of [
     async () => {
       try { indicators.push(await salesIndicator(run_id, period, periods)); }
       catch (error) { indicators.push(unavailable('sales', period, error)); }
     },
     async () => {
-      try {
-        const snapshot = await observe(run_id, 'FORUM', { measure: 'PRECURSE' });
-        const brands = await observe(run_id, 'FORUM', { measure: 'PRECURSE', evidence_shape: 'DIMENSIONAL_QUANTITATIVE_DATASET', dimension: 'BRAND' });
-        indicators.push(ready('precurse', 'operation', period, { company: valueOf(snapshot), ...brandValues(brands, 'FORUM') }, [], [snapshot, brands], cutoffOf(snapshot), 'FORUM P1 · PRECURSE snapshot stock', ['STOCK_OF_LATEST_SNAPSHOT', 'NO_PERIOD_SERIES']));
-      } catch (error) { indicators.push(unavailable('precurse', period, error)); }
-    },
-    async () => {
-      try { indicators.push(await forumIndicator(run_id, 'quotations', period, periods, 'QUOTATIONS')); }
+      try { indicators.push(await forumIndicator(run_id, 'quotations', period, periods, 'QUOTATIONS', latestSnapshot)); }
       catch (error) { indicators.push(unavailable('quotations', period, error)); }
     },
     async () => {
-      try { indicators.push(await forumIndicator(run_id, 'ufis', period, periods, 'UFIS')); }
+      try { indicators.push(await forumIndicator(run_id, 'ufis', period, periods, 'UFIS', latestSnapshot)); }
       catch (error) { indicators.push(unavailable('ufis', period, error)); }
     },
     async () => {
