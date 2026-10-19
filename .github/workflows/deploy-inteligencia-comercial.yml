@@ -65,9 +65,18 @@ jobs:
             exit 1
           fi
 
+          retry_az() {
+            local attempt=1 max_attempts=5
+            until "$@"; do
+              if [[ "$attempt" -ge "$max_attempts" ]]; then return 1; fi
+              sleep $((attempt * 10))
+              attempt=$((attempt + 1))
+            done
+          }
+
           if az containerapp show -g "$RG" -n "$APP" --output none 2>/dev/null; then
-            az containerapp secret set -g "$RG" -n "$APP" --secrets "azure-database-url=$AZURE_DATABASE_URL" --output none
-            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "AZURE_DATABASE_URL=secretref:azure-database-url" --output none
+            retry_az az containerapp secret set -g "$RG" -n "$APP" --secrets "azure-database-url=$AZURE_DATABASE_URL" --output none
+            retry_az az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "AZURE_DATABASE_URL=secretref:azure-database-url" --output none
           else
             az containerapp create \
               -g "$RG" -n "$APP" \
