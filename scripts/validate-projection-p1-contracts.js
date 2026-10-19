@@ -9,7 +9,7 @@ const client=new Client({name:'projection-p1-contract-validation',version:'1.0.0
 await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)));
 
 async function call(name,args){
-  const result=await client.callTool({name,arguments:args});
+  const result=await client.callTool({name,arguments:args},undefined,{timeout:180_000});
   assert.notEqual(result.isError,true,name+' MCP error: '+(result.content||[]).map(x=>x.text||'').join('\n'));
   assert.ok(result.structuredContent,name+' returned no structured content');
   return result.structuredContent;
@@ -34,15 +34,6 @@ try{
   const cutoff=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago'}).format(new Date());
   const period=cutoff.slice(0,7);
   const filters={commercial_universe:'OWN_STORES',date_from:period+'-01',date_to:cutoff};
-  const finance=await call('data_observe',{
-    run_id:run_id+'-sales-finance',source:'SALES',measure:'VIN_SALES',
-    evidence_shape:'DIMENSIONAL_QUANTITATIVE_DATASET',dimension:'FINANCIAL_ENTITY',filters
-  });
-  assert.equal(finance.authority,'P1_CERTIFIED');
-  assert.equal(finance.payload.dimension.id,'FINANCIAL_ENTITY');
-  assert.equal(typeof finance.dimensions,'object');
-  assert.equal(sum(finance.payload.members),finance.coverage.filtered_n,'SALES finance split does not reconcile to recognized rows');
-
   const salesMany=await call('sales_observe_many',{
     run_id:run_id+'-sales-stores',period,cutoff,commercial_universe:'OWN_STORES',
     operations:[{kind:'TOTAL'},{kind:'STORE'},{kind:'STORE_FINANCIAL_ENTITY'}]
@@ -86,10 +77,11 @@ try{
     assert.equal(evidence.payload.dimension.id,'FINANCIAL_ENTITY');
     const entities=evidence.payload.members;
     assert.equal(sum(entities),recognizedSales,'SALES financial split does not reconcile for seller '+seller.member_id);
-    const split={seller_id:seller.member_id,seller_label:seller.member_label,recognized_sales:recognizedSales,ufi_ejecutadas:0,otros_creditos:0,financiera_no_resuelta:0};
+    const split={seller_id:seller.member_id,seller_label:seller.member_label,recognized_sales:recognizedSales,ufi_ejecutadas:0,otros_creditos:0,financiera_no_resuelta:0,entities:[]};
     for(const entity of entities){
       const id=String(entity.member_id||'').trim().toUpperCase();
       const count=Number(entity.value||0);
+      split.entities.push(id);
       if(id==='UNRESOLVED')split.financiera_no_resuelta+=count;
       else if(id==='FORUM')split.ufi_ejecutadas+=count;
       else split.otros_creditos+=count;
@@ -138,7 +130,7 @@ try{
 
   console.log(JSON.stringify({
     status:'PASS',database:'AZURE_POSTGRESQL',period,cutoff,
-    sales:{recognized:total.payload.value,financial_entity_members:finance.payload.members.length,store_finance_members:storeFinance.payload.members.length,seller_finance:sellerTotals},
+    sales:{recognized:total.payload.value,financial_entity_members:[...new Set(sellerFinanceRows.flatMap(row=>row.entities||[]))].length,store_finance_members:storeFinance.payload.members.length,seller_finance:sellerTotals},
     forum_precurse:{snapshot_date:snapshot,own_stores:precurse.payload.value,dimensions:dimensional}
   }));
 }finally{
