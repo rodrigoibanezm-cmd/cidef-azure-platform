@@ -61,7 +61,7 @@ const mcpUrl = 'http://127.0.0.1:' + port + '/api/mcp';
 const child = spawn(process.execPath, [
   fileURLToPath(new URL('../motor-test-azure/server.js', import.meta.url)),
 ], {
-  env: { ...process.env, PORT: String(port) },
+  env: { ...process.env, PORT: String(port), NODE_ENV: 'test', MCP_AUTH_MODE: 'local-test' },
   stdio: 'ignore',
 });
 let client;
