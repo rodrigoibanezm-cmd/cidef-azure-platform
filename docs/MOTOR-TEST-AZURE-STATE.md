@@ -14,7 +14,7 @@
 - `lib/p3/executionJournal.js`: trazabilidad P3 adaptada a Azure.
 - `lib/neon.js`: adaptador de compatibilidad; usa `lib/azure-postgres.js`, no conecta a Neon.
 - `lib/azure-postgres.js`: PostgreSQL Azure por `AZURE_DATABASE_URL`, driver `pg`.
-- `motor-test-azure/server.js`: entrada HTTP independiente; reutiliza `createMcpServer()` y el transporte stateless del origen. `POST /api/mcp` valida bearer JWT Entra; `GET /healthz` y `/readyz` son públicos, y `/readyz` ejecuta `SELECT 1`.
+- `motor-test-azure/server.js`: entrada HTTP independiente; reutiliza `createMcpServer()` y el transporte stateless del origen. `POST /api/mcp` exige bearer JWT Entra con scope delegado `access_as_user` o rol permitido; `GET /healthz` y `/readyz` son públicos, y `/readyz` ejecuta `SELECT 1`.
 - `motor-test-azure/package.json` y `Dockerfile.motor-test-azure`: runtime Node aislado con `jose` para validación JWT; no modifica el runtime de `cidef-pg-mcp`. `MCP_AUTH_MODE=local-test` solo funciona en modo no productivo y enlazado a loopback.
 - `.github/workflows/verify-motor-test-azure-entry.yml`: construye la imagen y verifica inicio, transporte y listado de herramientas sin secretos de base de datos. No despliega ni publica imagen.
 
@@ -27,9 +27,9 @@
 
 ## Despliegue independiente preparado
 - El workflow manual [.github/workflows/deploy-motor-test-azure.yml](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/blob/main/.github/workflows/deploy-motor-test-azure.yml) construye la imagen y reutiliza `rg-cidef-prod`, ACR `cidefprodacr`, la identidad `id-cidef-azure-pg-mcp`, el Container Apps Environment obtenido de `cidef-pg-mcp` y `AZURE_DATABASE_URL` del entorno `Production`.
-- El único recurso nuevo previsto es un Container App independiente `cidef-motor-test-azure`, necesario para aislar esta entrada sin tocar `cidef-pg-mcp`. La ejecución comprueba el entorno, la asignación `AcrPull` existente y los permisos Entra; no crea roles ni modifica el MCP PostgreSQL.
-- El workflow valida health, `SELECT 1`, metadata OAuth y rechazo anónimo (`401`), luego ejecuta por el endpoint autenticado SALES P1, `p2.observed_sequence` determinístico y `run_trace`. La prueba P2 registra trazas P3 normales. El workflow es manual y no se ejecutó.
-- No se hizo inventario en vivo de Azure desde esta sesión. La existencia del Container Apps Environment, ACR, UAI y permisos se verificará en el preflight del workflow; cualquier ausencia detiene la ejecución sin asignar permisos.
+- El único recurso nuevo previsto es un Container App independiente `cidef-motor-test-azure`, necesario para aislar esta entrada sin tocar `cidef-pg-mcp`. GitHub OIDC se usa para acceso a Azure deployment/ACR; ya no solicita token para el API MCP ni exige roles `pg.*` a la identidad de despliegue.
+- El workflow valida health, `SELECT 1`, metadata OAuth y rechazo anónimo (`401`) en el endpoint desplegado. Luego reutiliza `scripts/validate-motor-test-azure-p2-p3.js` en un servidor de prueba ligado a loopback para comprobar las 12 herramientas, SALES P1 real, P2 determinístico y trazabilidad P3 contra Azure. Esa comprobación local no valida OAuth de ChatGPT contra el endpoint remoto. El workflow es manual y no se ejecutó.
+- No se hizo inventario en vivo de Azure desde esta sesión. La existencia del Container Apps Environment, ACR, UAI y permisos Azure se verifica en el preflight; cualquier ausencia detiene la ejecución sin crear asignaciones.
 
 ## Validación comprobada en Azure
 - Esquema P3: inicializado y existente en Azure. Action [39137710513](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39137710513) pasó conexión, `SELECT 1`, transacción `READ ONLY` + `ROLLBACK` y comparación de columnas, claves e índices requeridos por `executionJournal.js`: 4 claves requeridas, 0 diferencias.
@@ -78,5 +78,6 @@
 - No se añadieron ni ejecutaron tests unitarios de las otras unidades en esta actualización; se conserva su estado previo.
 - `forum_snapshot_transitions` necesita dos snapshots diarios certificados distintos; el Action buscará snapshots en los 30 días previos. Si no los encuentra, registrará `REQUIRES_DATA`.
 - No declarar certificación completa de P2 ni paridad funcional total.
-- Despliegue del servicio independiente `motor-test-azure`, autenticación externa e integración desde ChatGPT no están validados por estos Actions.
+- Despliegue del servicio independiente `motor-test-azure`, OAuth delegado de extremo a extremo con ChatGPT e integración desde ChatGPT siguen sin validar. El MCP original en `cidef-data-loader` no valida autenticación en `api/mcp.js`; la entrada Azure sí exige JWT Entra.
+- ChatGPT requiere OAuth de usuario para un MCP protegido; no usa client credentials ni claves API personalizadas. La entrada anuncia `access_as_user`, pero el registro Entra debe permitir el callback OAuth de ChatGPT y emitir el scope/audience esperado. Ese flujo interactivo no se ha probado.
 - Operaciones de snapshots en Azure no validadas; implican DDL y no se ejecutaron.
