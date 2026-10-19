@@ -39,7 +39,7 @@ jobs:
           from pathlib import Path
           import re
           route = Path('frontend/app/api/weekly-projections/admin/route.js').read_text()
-          fields = re.search(r"fields:\s*\\[([^\\]]+)\\]", route)
+          fields = re.search(r"fields:\s*\[([^\]]+)\]", route)
           if not fields or 'financial_entity' in fields.group(1):
               raise SystemExit('Admin sales fetch requests a field unsupported by the deployed P1 API')
           if 'seller_finance:sellerFinance' not in route:
