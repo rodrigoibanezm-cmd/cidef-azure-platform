@@ -5,6 +5,7 @@ COPY motor-test-azure/package.json ./package.json
 RUN npm install --omit=dev --no-audit --no-fund
 COPY lib ./lib
 COPY motor-test-azure/server.js ./motor-test-azure/server.js
+COPY motor-test-azure/como-vamos.js ./motor-test-azure/como-vamos.js
 USER node
 EXPOSE 3000
 CMD ["node", "motor-test-azure/server.js"]
