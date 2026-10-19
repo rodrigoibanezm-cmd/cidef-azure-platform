@@ -61,10 +61,11 @@ jobs:
           MCP_ACCESS_TOKEN=$(az account get-access-token --resource "api://$MCP_CLIENT_ID" --query accessToken --output tsv)
           [[ -n "$MCP_ACCESS_TOKEN" ]] || { echo "::error::Could not obtain an Entra token for the existing motor-test API"; exit 1; }
           echo "::add-mask::$MCP_ACCESS_TOKEN"
-          python3 - "$MCP_ACCESS_TOKEN" <<'PY'
-          import base64, json, sys
+          export MCP_ACCESS_TOKEN
+          python3 - <<'PY'
+          import base64, json, os
           try:
-              token=sys.argv[1]
+              token=os.environ["MCP_ACCESS_TOKEN"]
               payload=token.split(".")[1]
               claims=json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
               roles=claims.get("roles", [])
