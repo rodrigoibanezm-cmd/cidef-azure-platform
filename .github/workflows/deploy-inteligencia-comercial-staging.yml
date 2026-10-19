@@ -1,0 +1,202 @@
+name: Deploy Inteligencia Comercial staging to Azure
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-inteligencia-comercial-staging.yml'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 60
+    env:
+      RG: rg-cidef-prod
+      ACA_ENV: cidef-prod-env
+      ACR_NAME: cidefprodacr
+      ACR: cidefprodacr.azurecr.io
+      SOURCE_APP: cidef-inteligencia-comercial
+      STAGING_APP: cidef-intel-comercial-staging
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+
+    steps:
+      - name: Azure login using existing OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Checkout frontend staging branch
+        uses: actions/checkout@v4
+        with:
+          repository: rodrigoibanezm-cmd/cidef-inteligencia-comercial
+          ref: staging
+          path: frontend
+          persist-credentials: false
+
+      - name: Record staging source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Frontend staging commit: $(git -C frontend rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate existing Azure resources and capture production sizing
+        id: source-config
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${AZURE_DATABASE_URL:-}" ]] || { echo "::error::AZURE_DATABASE_URL is missing from the existing Production GitHub environment"; exit 1; }
+
+          az extension add --name containerapp --upgrade --yes
+          ACA_ENV_ID=$(az containerapp env show --resource-group "$RG" --name "$ACA_ENV" --query id --output tsv)
+          [[ -n "$ACA_ENV_ID" ]] || { echo "::error::Existing Container Apps environment was not found"; exit 1; }
+
+          IDENTITY_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query id --output tsv)
+          PRINCIPAL_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query principalId --output tsv)
+          ACR_ID=$(az acr show --name "$ACR_NAME" --resource-group "$RG" --query id --output tsv)
+          [[ -n "$IDENTITY_ID" && -n "$PRINCIPAL_ID" && -n "$ACR_ID" ]] || { echo "::error::Existing ACR or image-pull identity was not found"; exit 1; }
+          ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --include-inherited --query "[?roleDefinitionName=='AcrPull'] | length(@)" --output tsv)
+          [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::The existing image-pull identity has no AcrPull permission; no role assignment was attempted"; exit 1; }
+          echo "IDENTITY_ID=$IDENTITY_ID" >> "$GITHUB_ENV"
+
+          SOURCE_JSON=$(mktemp)
+          az containerapp show --resource-group "$RG" --name "$SOURCE_APP" --output json > "$SOURCE_JSON"
+          python3 - "$SOURCE_JSON" "$ACA_ENV_ID" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          app=json.load(open(sys.argv[1], encoding="utf-8"))
+          p=app.get("properties", {})
+          containers=p.get("template", {}).get("containers", [])
+          if p.get("managedEnvironmentId") != sys.argv[2]:
+              raise SystemExit("Production app is not in the expected existing Container Apps environment")
+          ingress=p.get("configuration", {}).get("ingress", {})
+          if not ingress.get("external") or ingress.get("targetPort") != 3000:
+              raise SystemExit("Production ingress does not match the expected external port 3000")
+          if not containers:
+              raise SystemExit("Production app has no container sizing to reuse")
+          resources=containers[0].get("resources", {})
+          cpu=resources.get("cpu")
+          memory=resources.get("memory")
+          scale=p.get("template", {}).get("scale", {})
+          if not cpu or not memory:
+              raise SystemExit("Production app CPU/memory settings are missing")
+          print(f"cpu={cpu}")
+          print(f"memory={memory}")
+          print(f"min_replicas={scale.get('minReplicas', 0)}")
+          print(f"max_replicas={scale.get('maxReplicas', 10)}")
+          PY
+          rm -f "$SOURCE_JSON"
+          echo "Reused Container Apps environment, ACR, pull identity, port and production CPU/memory sizing." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and push staging frontend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name "$ACR_NAME"
+          IMAGE="$ACR/cidef-inteligencia-comercial-staging:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker build --file frontend/Dockerfile --tag "$IMAGE" frontend
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "Staging image: `$IMAGE`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create or update only the staging Container App
+        shell: bash
+        run: |
+          set -euo pipefail
+          if az containerapp show --resource-group "$RG" --name "$STAGING_APP" --output none 2>/dev/null; then
+            EXISTING_JSON=$(mktemp)
+            az containerapp show --resource-group "$RG" --name "$STAGING_APP" --output json > "$EXISTING_JSON"
+            python3 - "$EXISTING_JSON" "$ACA_ENV" "$IDENTITY_ID" <<'PY'
+          import json, sys
+          app=json.load(open(sys.argv[1], encoding="utf-8"))
+          p=app.get("properties", {})
+          identity=app.get("identity", {}).get("userAssignedIdentities", {})
+          ingress=p.get("configuration", {}).get("ingress", {})
+          registries=p.get("configuration", {}).get("registries", [])
+          if not p.get("managedEnvironmentId", "").endswith("/managedEnvironments/"+sys.argv[2]):
+              raise SystemExit("Existing staging app is not in the intended shared Container Apps environment; refusing to alter it")
+          if sys.argv[3] not in identity:
+              raise SystemExit("Existing staging app is not attached to the existing image-pull identity; refusing to alter it")
+          if not ingress.get("external") or ingress.get("targetPort") != 3000:
+              raise SystemExit("Existing staging app does not have expected external ingress on port 3000; refusing to alter it")
+          if not any(r.get("server", "").lower() == "cidefprodacr.azurecr.io" and r.get("identity") == sys.argv[3] for r in registries):
+              raise SystemExit("Existing staging app does not use the existing ACR pull identity; refusing to alter it")
+          PY
+            rm -f "$EXISTING_JSON"
+            az containerapp secret set --resource-group "$RG" --name "$STAGING_APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
+            az containerapp update --resource-group "$RG" --name "$STAGING_APP" --image "$IMAGE" --set-env-vars "AZURE_DATABASE_URL=secretref:database-url" --output none
+          else
+            az containerapp create               --resource-group "$RG"               --name "$STAGING_APP"               --environment "$ACA_ENV"               --image "$IMAGE"               --registry-server "$ACR"               --registry-identity "$IDENTITY_ID"               --user-assigned "$IDENTITY_ID"               --ingress external               --target-port 3000               --cpu "${{ steps.source-config.outputs.cpu }}"               --memory "${{ steps.source-config.outputs.memory }}"               --min-replicas "${{ steps.source-config.outputs.min_replicas }}"               --max-replicas "${{ steps.source-config.outputs.max_replicas }}"               --revisions-mode single               --secrets "database-url=$AZURE_DATABASE_URL"               --env-vars "AZURE_DATABASE_URL=secretref:database-url"               --output none
+          fi
+
+          APP_JSON=$(mktemp)
+          az containerapp show --resource-group "$RG" --name "$STAGING_APP" --output json > "$APP_JSON"
+          python3 - "$APP_JSON" "$IMAGE" "$IDENTITY_ID" <<'PY'
+          import json, sys
+          app=json.load(open(sys.argv[1], encoding="utf-8"))
+          p=app.get("properties", {})
+          containers=p.get("template", {}).get("containers", [])
+          image=containers[0].get("image") if containers else None
+          ingress=p.get("configuration", {}).get("ingress", {})
+          if image != sys.argv[2]:
+              raise SystemExit("Staging Container App image does not match the image built by this run")
+          if not ingress.get("external") or ingress.get("targetPort") != 3000:
+              raise SystemExit("Staging Container App does not have expected external port 3000")
+          fqdn=ingress.get("fqdn", "")
+          if not fqdn:
+              raise SystemExit("Staging Container App has no ingress URL")
+          print(f"fqdn={fqdn}")
+          PY
+          FQDN=$(python3 - "$APP_JSON" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding="utf-8")).get("properties", {}).get("configuration", {}).get("ingress", {}).get("fqdn", ""))
+          PY
+          )
+          rm -f "$APP_JSON"
+          [[ -n "$FQDN" ]] || { echo "::error::Staging app did not receive an ingress URL"; exit 1; }
+          echo "FRONT_URL=https://$FQDN" >> "$GITHUB_ENV"
+          echo "Staging URL: https://$FQDN" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify staging revision, pages and read-only database endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOYED_IMAGE=$(az containerapp show --resource-group "$RG" --name "$STAGING_APP" --query properties.template.containers[0].image --output tsv)
+          [[ "$DEPLOYED_IMAGE" == "$IMAGE" ]] || { echo "::error::Staging app is not running the image built by this workflow"; exit 1; }
+
+          curl --fail --show-error --location --retry 12 --retry-delay 5 --retry-connrefused "$FRONT_URL/" --output /dev/null
+          curl --fail --show-error --location --retry 12 --retry-delay 5 --retry-connrefused "$FRONT_URL/proyeccion-semanal.html?verify=$GITHUB_RUN_ID" --output /tmp/proyeccion-semanal.html
+          curl --fail --show-error --location --retry 12 --retry-delay 5 --retry-connrefused "$FRONT_URL/proyeccion-admin.html?verify=$GITHUB_RUN_ID" --output /tmp/proyeccion-admin.html
+          curl --fail --show-error --location --retry 12 --retry-delay 5 --retry-connrefused "$FRONT_URL/api/health/database" --output /dev/null
+          curl --fail --show-error --location --retry 12 --retry-delay 5 --retry-connrefused "$FRONT_URL/api/weekly-projections/sucursales" --output /dev/null
+          curl --fail --show-error --location --retry 12 --retry-delay 5 --retry-connrefused "$FRONT_URL/api/weekly-projections/modelos" --output /dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+          weekly=Path('/tmp/proyeccion-semanal.html').read_text()
+          admin=Path('/tmp/proyeccion-admin.html').read_text()
+          if len(weekly) < 1000:
+              raise SystemExit("Weekly projection page response is unexpectedly small")
+          required={
+              "week selector":"id=\"week\"",
+              "store selector":"id=\"store\"",
+              "monthly sales chart":"id=\"monthTrend\"",
+              "weekly sales chart":"id=\"weekTrend\"",
+              "closed-week chart":"id=\"closedTrend\"",
+              "next-cutoff chart":"id=\"nextTrend\"",
+              "projection tables":"<table",
+              "store breakdown":"id=\"byStore\"",
+              "seller breakdown":"id=\"sellerBreakdown\"",
+          }
+          missing=[name for name, marker in required.items() if marker not in admin]
+          if missing:
+              raise SystemExit("Projection admin design is missing: "+", ".join(missing))
+          print("Staging pages, original store/week selectors, charts, tables and read-only Azure PostgreSQL endpoints responded.")
+          PY
+          echo "Staging frontend and read-only PostgreSQL checks passed. No projection writes were performed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Database connection deliberately reuses the existing Production AZURE_DATABASE_URL as requested." >> "$GITHUB_STEP_SUMMARY"
