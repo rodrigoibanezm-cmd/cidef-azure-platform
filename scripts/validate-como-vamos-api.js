@@ -32,8 +32,9 @@ try {
   }
   assert.ok(ready, 'Cómo vamos API test server did not become ready');
   const response = await fetch(endpoint + '/api/como-vamos?period=' + encodeURIComponent(period), { cache: 'no-store' });
-  assert.equal(response.status, 200, await response.text());
-  const payload = await response.json();
+  const responseText = await response.text();
+  assert.equal(response.status, 200, responseText);
+  const payload = JSON.parse(responseText);
   assert.equal(payload.period, period);
   assert.match(payload.run_id, /^como-vamos-/);
   assert.equal(payload.indicators.length, 6);
