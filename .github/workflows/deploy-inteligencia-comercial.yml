@@ -33,7 +33,8 @@ jobs:
 
       - name: Record frontend source revision
         shell: bash
-        run: echo "Frontend source commit: $(git -C frontend rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Frontend source commit: $(git -C frontend rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build and push frontend image
         shell: bash
