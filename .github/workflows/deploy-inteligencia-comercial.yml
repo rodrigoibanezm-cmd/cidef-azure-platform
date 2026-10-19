@@ -46,6 +46,27 @@ jobs:
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
+      - name: Apply projection CRM uniqueness migration
+        shell: bash
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::AZURE_DATABASE_URL is required from the existing Production environment secret."
+            exit 1
+          fi
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --yes postgresql-client
+          fi
+          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+            --file frontend/scripts/allow-multiple-projections-per-crm.sql
+          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+            --file frontend/scripts/verify-multiple-projections-per-crm.sql
+          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
+            --file frontend/scripts/create-weekly-projection-admin-snapshots.sql
+
       - name: Measure live projection dashboard baseline
         shell: bash
         run: |
@@ -81,27 +102,6 @@ jobs:
               summary.write("### Proyección admin: tiempos antes del snapshot\n\n")
               summary.write("```json\n" + json.dumps(timings, indent=2) + "\n```\n")
           PY
-
-      - name: Apply projection CRM uniqueness migration
-        shell: bash
-        env:
-          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
-            echo "::error::AZURE_DATABASE_URL is required from the existing Production environment secret."
-            exit 1
-          fi
-          if ! command -v psql >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes postgresql-client
-          fi
-          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-            --file frontend/scripts/allow-multiple-projections-per-crm.sql
-          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-            --file frontend/scripts/verify-multiple-projections-per-crm.sql
-          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-            --file frontend/scripts/create-weekly-projection-admin-snapshots.sql
 
       - name: Deploy frontend to existing Azure Container Apps environment
         shell: bash
