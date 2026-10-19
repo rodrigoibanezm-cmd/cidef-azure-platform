@@ -43,27 +43,33 @@
 
 ## Matriz P2
 - Registro de origen y Azure revisados en `main`: ambos tienen el mismo SHA de `lib/p2/registry.js` (`d3a3deeab679cdf84bdca9893528ae22e9e0f3c2`), 13 unidades activas y las mismas versiones/contratos.
-- El Action manual [validate-motor-test-azure-p2-matrix.yml](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/workflows/validate-motor-test-azure-p2-matrix.yml) está preparado para usar `AZURE_DATABASE_URL` del entorno `Production`. Ejecuta dos veces cada unidad pendiente con evidencia P1 obtenida en la misma ejecución, compara resultados y consulta `run_trace`. No se ha ejecutado.
+- El Action manual [validate-motor-test-azure-p2-matrix.yml](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/workflows/validate-motor-test-azure-p2-matrix.yml) usa `AZURE_DATABASE_URL` del entorno `Production`: ejecuta dos veces cada unidad pendiente con evidencia P1 obtenida en la misma ejecución, compara resultados y consulta `run_trace`. En el run [39154653203](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39154653203), las cuatro unidades históricas aquí señaladas se bloquearon antes de P2 con `HISTORICAL_SERIES_NOT_CERTIFIED`.
 - `PASS` histórico corresponde a la ejecución exitosa del Action 39141980346. Las otras unidades permanecen pendientes hasta ejecutar el Action. El Action registra `FAIL`, `REQUIRES_DATA` o `BLOCKED` por unidad y continúa con las independientes.
 
 | Unidad (contrato) | Slots P1 requeridos por el contrato original | Estado comprobado |
 |---|---|---|
 | `p2.pricing_window_sales` v0.2.0 | `pricing: COMMERCIAL_CONDITION_WINDOWS`; `sales: SALES_WINDOW_OBSERVATIONS` | Pendiente |
 | `p2.forum_snapshot_transitions` v0.1.0 | `baseline`, `comparison: OPERATION_STATE_SNAPSHOT` | Pendiente |
-| `p2.open_period_deterioration_risk` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `model_history: HISTORICAL_PERIOD_SERIES` | Pendiente |
+| `p2.open_period_deterioration_risk` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `model_history: HISTORICAL_PERIOD_SERIES` | P2 fixture PASS; P1→P2 real pendiente |
 | `p2.forum_funnel_performance` v0.1.0 | `converted`, `approved`, `expired`, `rejected: DIMENSIONAL_QUANTITATIVE_DATASET` | Pendiente |
-| `p2.target_attainment_probability` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `target: REFERENCE_OBSERVATION`; `model_history: HISTORICAL_PERIOD_SERIES` | Pendiente |
-| `p2.reconciled_seller_target_contribution` v0.1.0 | `seller_observed_to_cutoff: DIMENSIONAL_QUANTITATIVE_DATASET`; `seller_history: SELLER_CONTRIBUTION_HISTORY`; `store_target: REFERENCE_OBSERVATION`; `store_completion_history: HISTORICAL_PERIOD_SERIES` | Pendiente |
+| `p2.target_attainment_probability` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `target: REFERENCE_OBSERVATION`; `model_history: HISTORICAL_PERIOD_SERIES` | P2 fixture PASS; P1→P2 real pendiente |
+| `p2.reconciled_seller_target_contribution` v0.1.0 | `seller_observed_to_cutoff: DIMENSIONAL_QUANTITATIVE_DATASET`; `seller_history: SELLER_CONTRIBUTION_HISTORY`; `store_target: REFERENCE_OBSERVATION`; `store_completion_history: HISTORICAL_PERIOD_SERIES` | P2 fixture PASS; P1→P2 real pendiente |
 | `p2.reference_deviation` v0.1.0 | `observed: CUMULATIVE_PERIOD_OBSERVATION`; `reference: REFERENCE_OBSERVATION` | Pendiente |
 | `p2.proportion_across_periods` v0.1.0 | `part_series`, `universe_series: PERIOD_OBSERVATION_SERIES` | Pendiente |
 | `p2.observed_pair_delta` v0.1.0 | `baseline`, `comparison: QUANTITATIVE_OBSERVATION` | Pendiente |
 | `p2.part_to_universe_ratio` v0.1.0 | `part`, `universe: QUANTITATIVE_OBSERVATION` | Pendiente |
 | `p2.observed_sequence` v0.1.0 | `sequence: PERIOD_OBSERVATION_SERIES` | PASS — Action 39141980346 |
-| `p2.period_close_estimate` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `period_calendar: PERIOD_CALENDAR`; `model_history: HISTORICAL_PERIOD_SERIES` | Pendiente |
+| `p2.period_close_estimate` v0.1.0 | `observed_to_cutoff: CUMULATIVE_PERIOD_OBSERVATION`; `period_calendar: PERIOD_CALENDAR`; `model_history: HISTORICAL_PERIOD_SERIES` | P2 fixture PASS; P1→P2 real pendiente |
 | `p2.reconciled_dimension_delta` v0.1.0 | `baseline_by_member`, `comparison_by_member: DIMENSIONAL_QUANTITATIVE_DATASET` | Pendiente |
 
+## Pruebas P2 reproducidas en Azure
+- Se copiaron literalmente los tests originales del origen: `test/p2-open-period-deterioration-risk.test.js`, `test/p2-target-attainment-seller-contribution.test.js` y `test/p2-vertical-slice.test.js`.
+- `node --test --test-name-pattern='open-period deterioration risk|E06|target attainment|seller target contribution'` pasó 11/11 pruebas. Usaron los fixtures originales y los ejecutores Azure. Son pruebas unitarias de cálculo P2; no conectan a Neon/Azure ni escriben P3.
+- `lib/p2/execute.js`, `lib/p2/registry.js` y los cuatro ejecutores tienen SHA idéntico al origen. Esto no certifica la integración P1→P2 ni la disponibilidad de la serie histórica real.
+
 ## Pendiente
-- No hay validación de ejecución para las 12 unidades pendientes hasta ejecutar el Action manual. Los slots de la tabla describen los contratos, no prueban disponibilidad de evidencia en Azure.
+- La integración P1→P2 real de estas cuatro unidades sigue pendiente: el Action 39154653203 recibió `HISTORICAL_SERIES_NOT_CERTIFIED` antes de invocar P2. Los slots de la tabla describen los contratos; no prueban disponibilidad de evidencia en Azure.
+- No hay validación de ejecución de las otras ocho unidades pendientes hasta ejecutar el Action manual.
 - `forum_snapshot_transitions` necesita dos snapshots diarios certificados distintos; el Action buscará snapshots en los 30 días previos. Si no los encuentra, registrará `REQUIRES_DATA`.
 - No declarar certificación completa de P2 ni paridad funcional total.
 - Despliegue del servicio independiente `motor-test-azure`, autenticación externa e integración desde ChatGPT no están validados por estos Actions.
