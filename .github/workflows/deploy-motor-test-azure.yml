@@ -97,6 +97,21 @@ jobs:
             "provisioning_error":p.get("provisioningError")
           }))
           PY
+              for LOG_TYPE in system console; do
+                CURRENT_LOG=$(mktemp)
+                if az containerapp logs show --resource-group "$RG" --name "$APP" --revision "$CURRENT_LATEST" --type "$LOG_TYPE" --tail 50 --format text > "$CURRENT_LOG" 2>&1; then
+                  python3 - "$CURRENT_LOG" "$LOG_TYPE" <<'PY'
+          import re, sys
+          text=open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          text=re.sub(r'(?i)(postgres(?:ql)?://)[^\s@]+@', r'\1[REDACTED]@', text)
+          text=re.sub(r'(?i)(password|secret|token)(\s*[:=]\s*)\S+', r'\1\2[REDACTED]', text)
+          print("Existing revision "+sys.argv[2]+" logs:\n"+text[-12000:])
+          PY
+                else
+                  echo "Could not read existing revision $LOG_TYPE logs."
+                fi
+                rm -f "$CURRENT_LOG"
+              done
             fi
             rm -f "$CURRENT_REVISION_JSON"
           fi
@@ -270,6 +285,21 @@ jobs:
             "provisioning_error":p.get("provisioningError")
           }))
           PY
+              for LOG_TYPE in system console; do
+                FAILED_LOG=$(mktemp)
+                if az containerapp logs show --resource-group "$RG" --name "$APP" --revision "$LATEST_REVISION" --type "$LOG_TYPE" --tail 50 --format text > "$FAILED_LOG" 2>&1; then
+                  python3 - "$FAILED_LOG" "$LOG_TYPE" <<'PY'
+          import re, sys
+          text=open(sys.argv[1], encoding="utf-8", errors="replace").read()
+          text=re.sub(r'(?i)(postgres(?:ql)?://)[^\s@]+@', r'\1[REDACTED]@', text)
+          text=re.sub(r'(?i)(password|secret|token)(\s*[:=]\s*)\S+', r'\1\2[REDACTED]', text)
+          print("Failed revision "+sys.argv[2]+" logs:\n"+text[-12000:])
+          PY
+                else
+                  echo "Could not read failed revision $LOG_TYPE logs."
+                fi
+                rm -f "$FAILED_LOG"
+              done
             fi
             rm -f "$APP_STATE_JSON" "$REVISION_JSON"
             echo "::error::The latest Container App revision did not become active and ready with the expected image (latest: ${LATEST_REVISION:-unknown}; ready: ${LATEST_READY_REVISION:-unknown})"
