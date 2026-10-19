@@ -170,12 +170,12 @@ try {
     SELECT
       current_database() AS database_name,
       current_user AS connected_role,
-      current_role.rolsuper AS is_superuser,
-      current_role.rolcreatedb AS role_can_create_databases,
-      current_role.rolcreaterole AS role_can_create_roles,
-      current_role.rolinherit AS inherits_role_privileges,
-      current_role.rolcanlogin AS can_login,
-      current_role.rolbypassrls AS bypasses_row_security,
+      role_info.rolsuper AS is_superuser,
+      role_info.rolcreatedb AS role_can_create_databases,
+      role_info.rolcreaterole AS role_can_create_roles,
+      role_info.rolinherit AS inherits_role_privileges,
+      role_info.rolcanlogin AS can_login,
+      role_info.rolbypassrls AS bypasses_row_security,
       EXISTS (
         SELECT 1 FROM settable_roles
         WHERE rolsuper OR rolcreatedb
