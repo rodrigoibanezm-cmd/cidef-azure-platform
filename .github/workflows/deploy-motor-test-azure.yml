@@ -15,7 +15,7 @@ jobs:
     env:
       AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
       RG: rg-cidef-prod
-      SOURCE_APP: cidef-pg-mcp
+      ACA_ENV: cidef-prod-env
       APP: cidef-motor-test-azure
       ACR: cidefprodacr.azurecr.io
       MCP_CLIENT_ID: 71a36bc5-b850-43bf-be67-e28568ef0d58
@@ -38,28 +38,18 @@ jobs:
           [[ -n "${AZURE_DATABASE_URL:-}" ]] || { echo "::error::AZURE_DATABASE_URL is missing from Production"; exit 1; }
 
           az extension add --name containerapp --upgrade --yes
-          SOURCE_JSON=$(mktemp)
-          az containerapp show --resource-group "$RG" --name "$SOURCE_APP" --output json > "$SOURCE_JSON"
-          ACA_ENV_ID=$(python3 - "$SOURCE_JSON" <<'PY'
-          import json, sys
-          app=json.load(open(sys.argv[1], encoding="utf-8"))
-          print(app.get("properties", {}).get("managedEnvironmentId", ""))
-          PY
-          )
-          rm -f "$SOURCE_JSON"
-          [[ -n "$ACA_ENV_ID" ]] || { echo "::error::Existing Container Apps environment could not be resolved from cidef-pg-mcp"; exit 1; }
-          ACA_ENV="${ACA_ENV_ID##*/}"
+          ACA_ENV_ID=$(az containerapp env show --resource-group "$RG" --name "$ACA_ENV" --query id --output tsv)
+          [[ -n "$ACA_ENV_ID" ]] || { echo "::error::Existing Container Apps environment cidef-prod-env was not found"; exit 1; }
 
           IDENTITY_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query id --output tsv)
           PRINCIPAL_ID=$(az identity show --resource-group "$RG" --name id-cidef-azure-pg-mcp --query principalId --output tsv)
           ACR_ID=$(az acr show --name cidefprodacr --resource-group "$RG" --query id --output tsv)
           [[ -n "$IDENTITY_ID" && -n "$PRINCIPAL_ID" && -n "$ACR_ID" ]] || { echo "::error::Existing ACR or user-assigned identity was not found"; exit 1; }
-          ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --query "[?roleDefinitionName=='AcrPull'] | length(@)" --output tsv)
+          ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --include-inherited --query "[?roleDefinitionName=='AcrPull'] | length(@)" --output tsv)
           [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Existing AcrPull assignment for id-cidef-azure-pg-mcp is missing; no role assignment was attempted"; exit 1; }
 
           # GitHub OIDC is used only for Azure deployment. ChatGPT users authenticate with delegated OAuth at the MCP endpoint.
           echo "IDENTITY_ID=$IDENTITY_ID" >> "$GITHUB_ENV"
-          echo "ACA_ENV=$ACA_ENV" >> "$GITHUB_ENV"
 
           EXISTING_APP_JSON=$(mktemp)
           if az containerapp show --resource-group "$RG" --name "$APP" --output json > "$EXISTING_APP_JSON" 2>/dev/null; then
@@ -111,7 +101,7 @@ jobs:
             az containerapp create --resource-group "$RG" --name "$APP" --environment "$ACA_ENV" \
               --image "$IMAGE" --target-port 3000 --ingress external \
               --registry-server "$ACR" --registry-identity "$IDENTITY_ID" --user-assigned "$IDENTITY_ID" \
-              --min-replicas 0 --max-replicas 1 \
+              --min-replicas 0 --max-replicas 1 --cpu 0.5 --memory 1Gi \
               --secrets "database-url=$AZURE_DATABASE_URL" \
               --env-vars "AZURE_DATABASE_URL=secretref:database-url" \
                 "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" \
