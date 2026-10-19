@@ -10,6 +10,11 @@ on:
       - 'lib/data-floor/sales/contract.js'
       - 'lib/data-floor/sales/dataset.js'
       - 'lib/data-floor/sales/multiObserve.js'
+      - 'lib/data-floor/forum/contract.js'
+      - 'lib/data-floor/forum/observations.js'
+      - 'lib/data-floor/forum/query.js'
+      - 'test/forum-p1-semantics.test.js'
+      - 'scripts/validate-projection-p1-contracts.js'
       - 'lib/mcp/server.js'
       - 'scripts/validate-sales-financial-p1.js'
       - 'test/sales-p1-contract.test.js'
@@ -194,6 +199,9 @@ jobs:
 
       - name: Verify anonymous remote MCP transport and 12 tools
         run: MCP_SMOKE_URL="$APP_URL/api/mcp" node motor-test-azure/smoke-test.js
+
+      - name: Validate exposed SALES and FORUM P1 projection contracts on Azure
+        run: MCP_URL="$APP_URL/api/mcp" node scripts/validate-projection-p1-contracts.js
 
       - name: Reconcile SALES recognized VINs by store and financing entity in Azure PostgreSQL
         run: node scripts/validate-sales-financial-p1.js

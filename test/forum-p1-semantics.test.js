@@ -31,6 +31,13 @@ test('P1 FORUM publishes explicit financing semantics',()=>{
   assert.ok(d.fields.includes('contract_number'));
 });
 
+test('PRECURSE contract declares supported store and seller identities',()=>{
+  const d=describeForum();
+  assert.ok(d.dimensions.includes('STORE'));
+  assert.ok(d.dimensions.includes('SELLER'));
+  assert.ok(d.semantic_constraints.some(x=>/PRECURSE.*BRAND.*STORE.*SELLER/.test(x)));
+});
+
 test('P1 FORUM UFI executor never promotes Precurse to UFI',()=>{
   const src=fs.readFileSync(new URL('../lib/data-floor/forum/observations.js',import.meta.url),'utf8');
   assert.doesNotMatch(src,/OPEN_MONTH_CURSE_PLUS_OUTSTANDING_PRECURSE/);

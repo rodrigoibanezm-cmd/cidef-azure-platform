@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateVentasMonthlyActual } from '../lib/motors/ventas-monthly-actual-v01.js';
 import { recognizedSale } from '../lib/ventas/ventasContextUtils.js';
+import { describeSales } from '../lib/data-floor/sales/contract.js';
 
 test('SALES monthly engine preserves its certified result contract', () => {
   const result = calculateVentasMonthlyActual({
@@ -54,4 +55,12 @@ test('SALES VIN recognition carries the selected row financing entity unchanged'
   assert.equal(sale.source_id, 19);
   assert.equal(sale.vin, 'VIN-1');
   assert.equal(sale.entidad_financiera, ' FORUM ');
+});
+
+
+test('SALES P1 publishes financial entity as a recognized-sale field and dimension',()=>{
+  const contract=describeSales();
+  assert.ok(contract.fields.includes('financial_entity'));
+  assert.ok(contract.dimensions.includes('FINANCIAL_ENTITY'));
+  assert.ok(contract.semantic_constraints.some(x=>/FINANCIAL_ENTITY preserves ventas_raw\.entidad_financiera/.test(x)));
 });
