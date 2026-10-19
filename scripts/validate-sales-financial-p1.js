@@ -8,7 +8,7 @@ if(!endpoint)throw new Error('MCP_URL is required');
 const client=new Client({name:'sales-financial-p1-validation',version:'1.0.0'});
 await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)));
 function structured(result,label){
-  assert.notEqual(result.isError,true,label+' returned an MCP error');
+  assert.notEqual(result.isError,true,label+' returned an MCP error: '+JSON.stringify(result.content??result));
   assert.ok(result.structuredContent,label+' returned no structured content');
   return result.structuredContent;
 }
