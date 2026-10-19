@@ -16,6 +16,17 @@ jobs:
       NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
       CIDEF_ORIGIN_PATH: cidef-data-loader
     steps:
+      - name: Check read access to certified source
+        shell: bash
+        env:
+          CIDEF_DATA_LOADER_READ_TOKEN: ${{ secrets.CIDEF_DATA_LOADER_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CIDEF_DATA_LOADER_READ_TOKEN:-}" ]]; then
+            echo "::error::CIDEF_DATA_LOADER_READ_TOKEN is missing from the Production environment; the certified source repository is private"
+            exit 1
+          fi
+
       - name: Checkout Azure repository
         uses: actions/checkout@v4
 
@@ -25,6 +36,7 @@ jobs:
           repository: rodrigoibanezm-cmd/cidef-data-loader
           ref: f74022515015e48725da60af8b18a120b7ddf9c1
           path: cidef-data-loader
+          token: ${{ secrets.CIDEF_DATA_LOADER_READ_TOKEN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
