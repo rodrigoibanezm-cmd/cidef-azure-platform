@@ -50,18 +50,25 @@ const now=new Date();
     const stores=oneDimMap(storeEvidence);
     const financeRows=tupleRows(financeEvidence);
     const byStore=totals(financeRows);
-    const storeRows=[...stores.entries()].map(([store,value])=>({store,value}));
     const allStoreCount=[...stores.values()].reduce((sum,value)=>sum+value,0);
     assert.equal(allStoreCount,total,'Store totals do not reconcile to recognized SALES total');
     assert.equal(financeRows.reduce((sum,row)=>sum+row.value,0),total,'Finance split does not reconcile to recognized SALES total');
     for(const [store,value] of stores)assert.equal(byStore.get(store)??0,value,'Finance split does not reconcile for store '+store);
-    const unresolved=financeRows.filter(row=>row.entity==='UNRESOLVED').reduce((sum,row)=>sum+row.value,0);
-    const forum=financeRows.filter(row=>row.entity!=='UNRESOLVED'&&String(row.entity).trim().toUpperCase()==='FORUM').reduce((sum,row)=>sum+row.value,0);
-    const other=financeRows.filter(row=>row.entity!=='UNRESOLVED'&&String(row.entity).trim().toUpperCase()!=='FORUM').reduce((sum,row)=>sum+row.value,0);
-    assert.equal(forum+other+unresolved,total,'FORUM/other/unresolved classifications do not reconcile');
-    assert.ok(forum+other>0,'No recognized SALES rows carry a resolved financial entity');
-    report.push({period:item.period,cutoff:item.cutoff,recognized_sales:total,store_count:stores.size,store_totals:storeRows,
-      ufi_ejecutadas_forum:forum,otros_creditos:other,financiera_no_resuelta:unresolved,
+    const storeRows=[...stores.entries()].map(([store,recognizedSales])=>{
+      const rows=financeRows.filter(row=>row.store===store);
+      const ufi=rows.filter(row=>row.entity!=='UNRESOLVED'&&String(row.entity).trim().toUpperCase()==='FORUM').reduce((sum,row)=>sum+row.value,0);
+      const other=rows.filter(row=>row.entity!=='UNRESOLVED'&&String(row.entity).trim().toUpperCase()!=='FORUM').reduce((sum,row)=>sum+row.value,0);
+      const unresolved=rows.filter(row=>row.entity==='UNRESOLVED').reduce((sum,row)=>sum+row.value,0);
+      assert.equal(ufi+other+unresolved,recognizedSales,'FORUM/other/unresolved do not reconcile for store '+store);
+      return {store,recognized_sales:recognizedSales,ufi_ejecutadas_forum:ufi,otros_creditos:other,financiera_no_resuelta:unresolved};
+    });
+    const ufi=storeRows.reduce((sum,row)=>sum+row.ufi_ejecutadas_forum,0);
+    const other=storeRows.reduce((sum,row)=>sum+row.otros_creditos,0);
+    const unresolved=storeRows.reduce((sum,row)=>sum+row.financiera_no_resuelta,0);
+    assert.equal(ufi+other+unresolved,total,'FORUM/other/unresolved classifications do not reconcile');
+    assert.ok(ufi+other>0,'No recognized SALES rows carry a resolved financial entity');
+    report.push({period:item.period,cutoff:item.cutoff,recognized_sales:total,store_count:stores.size,stores:storeRows,
+      ufi_ejecutadas_forum:ufi,otros_creditos:other,financiera_no_resuelta:unresolved,
       reconciliation:'PASS'});
   }
   console.log(JSON.stringify({source:'Azure PostgreSQL via certified SALES P1 engine',cases:report},null,2));
