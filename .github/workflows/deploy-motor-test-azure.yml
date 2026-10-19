@@ -51,12 +51,29 @@ jobs:
           # GitHub OIDC is used only for Azure deployment. ChatGPT users authenticate with delegated OAuth at the MCP endpoint.
           echo "IDENTITY_ID=$IDENTITY_ID" >> "$GITHUB_ENV"
 
-          az containerapp show --resource-group "$RG" --name "$APP" --output none 2>/dev/null || {
-            echo "::error::Existing motor-test Container App was not found; refusing to create infrastructure or assign ACR roles"
-            exit 1
-          }
           EXISTING_APP_JSON=$(mktemp)
-          az containerapp show --resource-group "$RG" --name "$APP" --output json > "$EXISTING_APP_JSON"
+          AZURE_CLI_ERROR=$(mktemp)
+          APP_FOUND=false
+          for attempt in 1 2 3 4; do
+            if az containerapp show --resource-group "$RG" --name "$APP" --output json > "$EXISTING_APP_JSON" 2>"$AZURE_CLI_ERROR"; then
+              APP_FOUND=true
+              break
+            fi
+            if grep -Eqi 'Service Unavailable|HTTPError.*503|status code: 503' "$AZURE_CLI_ERROR"; then
+              if [[ "$attempt" -lt 4 ]]; then
+                echo "ARM returned HTTP 503 while reading the existing Container App; retry $attempt/4."
+                sleep $((attempt * 10))
+                continue
+              fi
+              echo "::error::ARM remained unavailable while reading the existing Container App"
+            else
+              echo "::error::Could not read the existing motor-test Container App; no resource creation was attempted"
+            fi
+            rm -f "$EXISTING_APP_JSON" "$AZURE_CLI_ERROR"
+            exit 1
+          done
+          rm -f "$AZURE_CLI_ERROR"
+          [[ "$APP_FOUND" == "true" ]] || { echo "::error::Existing motor-test Container App was not found; refusing to create infrastructure or assign ACR roles"; exit 1; }
           python3 - "$EXISTING_APP_JSON" "$ACA_ENV_ID" "$IDENTITY_ID" <<'PY'
           import json, sys
           app=json.load(open(sys.argv[1], encoding="utf-8"))
@@ -98,15 +115,47 @@ jobs:
             "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
             --output none
 
+          APP_STATE_JSON=$(mktemp)
+          ERROR_FILE=$(mktemp)
+          STATE=""
           for attempt in {1..36}; do
-            STATE=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.provisioningState --output tsv)
+            SHOW_OK=false
+            for retry in 1 2 3 4; do
+              if az containerapp show --resource-group "$RG" --name "$APP" --output json > "$APP_STATE_JSON" 2>"$ERROR_FILE"; then
+                SHOW_OK=true
+                break
+              fi
+              if grep -Eqi 'Service Unavailable|HTTPError.*503|status code: 503' "$ERROR_FILE"; then
+                if [[ "$retry" -lt 4 ]]; then
+                  echo "ARM returned HTTP 503 while checking Container App state; retry $retry/4."
+                  sleep $((retry * 10))
+                  continue
+                fi
+                echo "::error::ARM remained unavailable while checking Container App state"
+              else
+                echo "::error::Could not read Container App state; not retrying a non-transient error"
+              fi
+              rm -f "$APP_STATE_JSON" "$ERROR_FILE"
+              exit 1
+            done
+            [[ "$SHOW_OK" == "true" ]] || { rm -f "$APP_STATE_JSON" "$ERROR_FILE"; exit 1; }
+            STATE=$(python3 - "$APP_STATE_JSON" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding="utf-8")).get("properties", {}).get("provisioningState", ""))
+          PY
+          )
             [[ "$STATE" == "Succeeded" ]] && break
-            [[ "$STATE" != "Failed" ]] || { echo "::error::motor-test Container App provisioning failed"; exit 1; }
+            [[ "$STATE" != "Failed" ]] || { echo "::error::motor-test Container App provisioning failed"; rm -f "$APP_STATE_JSON" "$ERROR_FILE"; exit 1; }
             sleep 5
           done
-          [[ "$STATE" == "Succeeded" ]] || { echo "::error::motor-test Container App provisioning timed out"; exit 1; }
+          [[ "$STATE" == "Succeeded" ]] || { echo "::error::motor-test Container App provisioning timed out"; rm -f "$APP_STATE_JSON" "$ERROR_FILE"; exit 1; }
 
-          FQDN=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.configuration.ingress.fqdn --output tsv)
+          FQDN=$(python3 - "$APP_STATE_JSON" <<'PY'
+          import json, sys
+          print(json.load(open(sys.argv[1], encoding="utf-8")).get("properties", {}).get("configuration", {}).get("ingress", {}).get("fqdn", ""))
+          PY
+          )
+          rm -f "$APP_STATE_JSON" "$ERROR_FILE"
           [[ -n "$FQDN" ]] || { echo "::error::The independent Container App has no ingress FQDN"; exit 1; }
           ERROR_FILE=$(mktemp)
           UPDATED=false
