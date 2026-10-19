@@ -178,7 +178,4 @@ jobs:
         run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 jose@6.1.0 zod@3.25.76 pg@8.16.3
 
       - name: Validate authenticated tool listing, SALES P1, P2 determinism and P3 trace
-        env:
-          MCP_URL: ${{ env.APP_URL }}/api/mcp
-          MCP_ACCESS_TOKEN: ${{ env.MCP_ACCESS_TOKEN }}
-        run: node scripts/validate-motor-test-azure-p2-p3.js
+        run: MCP_URL="$APP_URL/api/mcp" node scripts/validate-motor-test-azure-p2-p3.js
