@@ -1,0 +1,35 @@
+name: Diagnose Bellavista VIN gap (Oct 2026)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-bellavista-vins:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 15
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install PostgreSQL driver
+        run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
+      - name: Syntax-check diagnostic
+        run: node --check scripts/diagnose-bellavista-vin-gap-2026.js
+      - name: Read Azure sales, projection endpoint, and credit notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::Missing AZURE_DATABASE_URL in the Production environment"
+            exit 1
+          fi
+          node scripts/diagnose-bellavista-vin-gap-2026.js
