@@ -2,6 +2,11 @@ name: Deploy independent motor-test MCP to Azure
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'motor-test-azure/como-vamos.js'
 
 permissions:
   contents: read
