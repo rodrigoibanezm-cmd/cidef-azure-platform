@@ -14,16 +14,22 @@
 - `lib/p3/executionJournal.js`: trazabilidad P3 adaptada a Azure.
 - `lib/neon.js`: adaptador de compatibilidad; usa `lib/azure-postgres.js`, no conecta a Neon.
 - `lib/azure-postgres.js`: PostgreSQL Azure por `AZURE_DATABASE_URL`, driver `pg`.
-- `motor-test-azure/server.js`: entrada HTTP independiente; reutiliza `createMcpServer()` y `StreamableHTTPServerTransport` stateless del origen. Acepta MCP en `POST /api/mcp`; `GET /healthz` es health check.
-- `motor-test-azure/package.json` y `Dockerfile.motor-test-azure`: runtime Node aislado para esa entrada; no modifica el runtime de `cidef-pg-mcp`.
+- `motor-test-azure/server.js`: entrada HTTP independiente; reutiliza `createMcpServer()` y el transporte stateless del origen. `POST /api/mcp` valida bearer JWT Entra; `GET /healthz` y `/readyz` son públicos, y `/readyz` ejecuta `SELECT 1`.
+- `motor-test-azure/package.json` y `Dockerfile.motor-test-azure`: runtime Node aislado con `jose` para validación JWT; no modifica el runtime de `cidef-pg-mcp`. `MCP_AUTH_MODE=local-test` solo funciona en modo no productivo y enlazado a loopback.
 - `.github/workflows/verify-motor-test-azure-entry.yml`: construye la imagen y verifica inicio, transporte y listado de herramientas sin secretos de base de datos. No despliega ni publica imagen.
 
 ## Dependencias
 - El grafo de imports de `lib/mcp/server.js` contiene módulos locales en `lib/`; las dependencias externas de ejecución son `@modelcontextprotocol/sdk`, `zod` y `pg`.
 - `package.json` raíz incluye `pg`, pero no el SDK MCP ni `zod`. El paquete aislado los declara para resolver imports desde `lib/` dentro de la imagen.
-- El MCP requiere `AZURE_DATABASE_URL` al invocar motores con acceso a datos. La carga del módulo, el inicio HTTP y `tools/list` no requieren conectar a una base.
+- El MCP requiere `AZURE_DATABASE_URL` para motores con acceso a datos. El inicio y `tools/list` no requieren conexión a base. `MCP_ENTRA_TENANT_ID`, `MCP_ENTRA_CLIENT_ID` y `MCP_PUBLIC_URL` son requeridos en runtime protegido.
 - No usar `NEON_DATABASE_URL`, `DATABASE_URL` ni `POSTGRES_URL` como fallback.
 - Las operaciones de snapshots realizan DDL y no forman parte de las pruebas de inicio.
+
+## Despliegue independiente preparado
+- El workflow manual [.github/workflows/deploy-motor-test-azure.yml](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/blob/main/.github/workflows/deploy-motor-test-azure.yml) construye la imagen y reutiliza `rg-cidef-prod`, ACR `cidefprodacr`, la identidad `id-cidef-azure-pg-mcp`, el Container Apps Environment obtenido de `cidef-pg-mcp` y `AZURE_DATABASE_URL` del entorno `Production`.
+- El único recurso nuevo previsto es un Container App independiente `cidef-motor-test-azure`, necesario para aislar esta entrada sin tocar `cidef-pg-mcp`. La ejecución comprueba el entorno, la asignación `AcrPull` existente y los permisos Entra; no crea roles ni modifica el MCP PostgreSQL.
+- El workflow valida health, `SELECT 1`, metadata OAuth y rechazo anónimo (`401`), luego ejecuta por el endpoint autenticado SALES P1, `p2.observed_sequence` determinístico y `run_trace`. La prueba P2 registra trazas P3 normales. El workflow es manual y no se ejecutó.
+- No se hizo inventario en vivo de Azure desde esta sesión. La existencia del Container Apps Environment, ACR, UAI y permisos se verificará en el preflight del workflow; cualquier ausencia detiene la ejecución sin asignar permisos.
 
 ## Validación comprobada en Azure
 - Esquema P3: inicializado y existente en Azure. Action [39137710513](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39137710513) pasó conexión, `SELECT 1`, transacción `READ ONLY` + `ROLLBACK` y comparación de columnas, claves e índices requeridos por `executionJournal.js`: 4 claves requeridas, 0 diferencias.
