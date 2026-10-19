@@ -122,6 +122,135 @@ try {
   );
   assert.equal(readOnly.rows[0]?.read_only, 'on');
 
+  const permissionResult = await client.query(`
+    WITH current_role AS (
+      SELECT oid, rolname, rolsuper, rolcreatedb, rolcreaterole, rolinherit, rolcanlogin, rolbypassrls
+      FROM pg_roles
+      WHERE rolname = current_user
+    ),
+    settable_roles AS (
+      SELECT role_row.*
+      FROM pg_roles AS role_row
+      WHERE role_row.rolsuper
+         OR role_row.rolcreatedb
+         OR role_row.rolcreaterole
+         OR pg_has_role(current_user, role_row.oid, 'SET')
+    ),
+    public_database_privileges AS (
+      SELECT
+        bool_or(acl.privilege_type = 'CONNECT') AS connect,
+        bool_or(acl.privilege_type = 'CREATE') AS create_schema,
+        bool_or(acl.privilege_type = 'TEMPORARY') AS temporary
+      FROM pg_database AS database_row
+      CROSS JOIN LATERAL aclexplode(
+        COALESCE(database_row.datacl, acldefault('d', database_row.datdba))
+      ) AS acl
+      WHERE database_row.datname = current_database()
+        AND acl.grantee = 0
+    ),
+    public_schema_privileges AS (
+      SELECT
+        bool_or(acl.privilege_type = 'USAGE') AS usage,
+        bool_or(acl.privilege_type = 'CREATE') AS create_objects
+      FROM pg_namespace AS namespace
+      CROSS JOIN LATERAL aclexplode(
+        COALESCE(namespace.nspacl, acldefault('n', namespace.nspowner))
+      ) AS acl
+      WHERE namespace.nspname = 'public'
+        AND acl.grantee = 0
+    ),
+    public_table_privileges AS (
+      SELECT count(DISTINCT relation.oid)::integer AS selectable_relations
+      FROM pg_class AS relation
+      CROSS JOIN LATERAL aclexplode(
+        COALESCE(relation.relacl, acldefault('r', relation.relowner))
+      ) AS acl
+      WHERE relation.relnamespace = 'public'::regnamespace
+        AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+        AND acl.grantee = 0
+        AND acl.privilege_type = 'SELECT'
+    )
+    SELECT
+      current_database() AS database_name,
+      current_user AS connected_role,
+      current_role.rolsuper AS is_superuser,
+      current_role.rolcreatedb AS role_can_create_databases,
+      current_role.rolcreaterole AS role_can_create_roles,
+      current_role.rolinherit AS inherits_role_privileges,
+      current_role.rolcanlogin AS can_login,
+      current_role.rolbypassrls AS bypasses_row_security,
+      EXISTS (
+        SELECT 1 FROM settable_roles
+        WHERE rolsuper OR rolcreatedb
+      ) AS can_create_databases_directly_or_after_set_role,
+      EXISTS (
+        SELECT 1 FROM settable_roles
+        WHERE rolsuper OR rolcreaterole
+      ) AS can_create_roles_directly_or_after_set_role,
+      COALESCE(public_database_privileges.connect, false) AS public_can_connect_to_current_database,
+      COALESCE(public_schema_privileges.usage, false) AS public_has_schema_usage,
+      COALESCE(public_schema_privileges.create_objects, false) AS public_has_schema_create,
+      COALESCE(public_table_privileges.selectable_relations, 0) AS public_selectable_relations,
+      EXISTS (
+        SELECT 1 FROM pg_database WHERE datname = 'cidef_staging'
+      ) AS cidef_staging_database_exists,
+      has_database_privilege(current_user, current_database(), 'CONNECT') AS current_role_can_connect_current_database,
+      has_database_privilege(current_user, current_database(), 'CREATE') AS current_role_has_database_create_privilege,
+      has_schema_privilege(current_user, 'public', 'USAGE') AS current_role_has_public_schema_usage,
+      has_schema_privilege(current_user, 'public', 'CREATE') AS current_role_has_public_schema_create,
+      (
+        SELECT count(*)::integer
+        FROM pg_class AS relation
+        WHERE relation.relnamespace = 'public'::regnamespace
+          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND has_table_privilege(current_user, relation.oid, 'SELECT')
+      ) AS current_role_selectable_relations,
+      (
+        SELECT COALESCE(json_agg(json_build_object(
+          'database', database_row.datname,
+          'owner', pg_get_userbyid(database_row.datdba),
+          'can_connect', has_database_privilege(current_user, database_row.datname, 'CONNECT')
+        ) ORDER BY database_row.datname), '[]'::json)
+        FROM pg_database AS database_row
+        WHERE database_row.datallowconn
+      ) AS database_access,
+      (
+        SELECT COALESCE(json_agg(json_build_object(
+          'role', candidate.rolname,
+          'superuser', candidate.rolsuper,
+          'createdb', candidate.rolcreatedb,
+          'createrole', candidate.rolcreaterole
+        ) ORDER BY candidate.rolname), '[]'::json)
+        FROM pg_roles AS candidate
+        WHERE candidate.rolsuper OR candidate.rolcreatedb OR candidate.rolcreaterole
+          AND pg_has_role(current_user, candidate.oid, 'SET')
+      ) AS settable_admin_roles
+    FROM current_role
+    CROSS JOIN public_database_privileges
+    CROSS JOIN public_schema_privileges
+    CROSS JOIN public_table_privileges
+  `);
+
+  const roleMemberships = await client.query(
+    'SELECT parent.rolname AS role_name, membership.admin_option ' +
+    'FROM pg_auth_members AS membership ' +
+    'JOIN pg_roles AS parent ON parent.oid = membership.roleid ' +
+    'JOIN pg_roles AS member ON member.oid = membership.member ' +
+    'WHERE member.rolname = current_user ' +
+    'ORDER BY parent.rolname',
+  );
+
+  const permissionReport = {
+    ...permissionResult.rows[0],
+    direct_role_memberships: roleMemberships.rows,
+    isolation_assessment: {
+      staging_role_would_inherit_public_connect: permissionResult.rows[0]?.public_can_connect_to_current_database,
+      staging_role_would_inherit_public_table_select: Number(permissionResult.rows[0]?.public_selectable_relations ?? 0) > 0,
+      production_data_readable_via_public_grants:
+        Number(permissionResult.rows[0]?.public_selectable_relations ?? 0) > 0,
+    },
+  };
+
   const relations = await client.query(
     "SELECT requested.table_name, relation.oid::text AS relation_oid, namespace.nspname AS schema_name, relation.relkind " +
     "FROM (VALUES ('p3_runs'::text), ('p3_events'::text)) AS requested(table_name) " +
