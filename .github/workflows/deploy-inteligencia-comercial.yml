@@ -43,8 +43,14 @@ jobs:
 
       - name: Deploy frontend to existing Azure Container Apps environment
         shell: bash
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
         run: |
           set -euo pipefail
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::AZURE_DATABASE_URL is required from the existing Production environment secret."
+            exit 1
+          fi
           az extension add --name containerapp --upgrade --yes
           RG="rg-cidef-prod"
           APP="cidef-inteligencia-comercial"
@@ -60,7 +66,8 @@ jobs:
           fi
 
           if az containerapp show -g "$RG" -n "$APP" --output none 2>/dev/null; then
-            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --output none
+            az containerapp secret set -g "$RG" -n "$APP" --secrets "azure-database-url=$AZURE_DATABASE_URL" --output none
+            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "AZURE_DATABASE_URL=secretref:azure-database-url" --output none
           else
             az containerapp create \
               -g "$RG" -n "$APP" \
@@ -69,6 +76,8 @@ jobs:
               --user-assigned "$IDENTITY_ID" \
               --registry-server cidefprodacr.azurecr.io \
               --registry-identity "$IDENTITY_ID" \
+              --secrets "azure-database-url=$AZURE_DATABASE_URL" \
+              --env-vars "AZURE_DATABASE_URL=secretref:azure-database-url" \
               --ingress external --target-port 3000 \
               --min-replicas 0 --max-replicas 1 \
               --cpu 0.5 --memory 1Gi \
@@ -86,4 +95,9 @@ jobs:
           curl --fail --show-error --location --retry 8 --retry-delay 5 --retry-connrefused "$FRONT_URL/" --output /dev/null
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/cierre-mensual" --output /dev/null
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/como-vamos" --output /dev/null
-          echo "Three frontend routes respond successfully." >> "$GITHUB_STEP_SUMMARY"
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/proyeccion-semanal.html" --output /dev/null
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/proyeccion-admin.html" --output /dev/null
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/health/database" --output /dev/null
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/sucursales" --output /dev/null
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/modelos" --output /dev/null
+          echo "Home, existing modules, projections pages, Azure PostgreSQL health, branch and model reads succeeded." >> "$GITHUB_STEP_SUMMARY"
