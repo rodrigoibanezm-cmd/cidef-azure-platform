@@ -1,3 +1,4 @@
+import { closeAzurePool } from '../lib/azure-postgres.js';
 import assert from 'node:assert/strict';
 import { observeSalesMany } from '../lib/data-floor/sales/multiObserve.js';
 
@@ -63,3 +64,4 @@ const now=new Date();
       reconciliation:'PASS'});
   }
   console.log(JSON.stringify({source:'Azure PostgreSQL via certified SALES P1 engine',cases:report},null,2));
+await closeAzurePool();
