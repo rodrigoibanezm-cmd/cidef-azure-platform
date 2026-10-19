@@ -1,12 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { observeSalesMany } from '../lib/data-floor/sales/multiObserve.js';
 
-const endpoint=process.env.MCP_URL;
-if(!endpoint)throw new Error('MCP_URL is required');
-const client=new Client({name:'sales-financial-p1-validation',version:'1.0.0'});
-await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)));
+if(!process.env.AZURE_DATABASE_URL)throw new Error('AZURE_DATABASE_URL is required');
 function structured(result,label){
   assert.notEqual(result.isError,true,label+' returned an MCP error: '+JSON.stringify(result.content??result));
   assert.ok(result.structuredContent,label+' returned no structured content');
@@ -46,14 +42,10 @@ try{
   ];
   const report=[];
   for(const item of cases){
-    const result=structured(await client.callTool({
-      name:'sales_observe_many',
-      arguments:{
-        run_id:'sales-financial-'+randomUUID(),
-        period:item.period,cutoff:item.cutoff,commercial_universe:'OWN_STORES',
-        operations:[{kind:'TOTAL'},{kind:'STORE'},{kind:'STORE_FINANCIAL_ENTITY'}],
-      },
-    }),'sales_observe_many');
+    const result=await observeSalesMany({
+      period:item.period,cutoff:item.cutoff,commercial_universe:'OWN_STORES',
+      operations:[{kind:'TOTAL'},{kind:'STORE'},{kind:'STORE_FINANCIAL_ENTITY'}],
+    });
     assert.equal(result.execution.preparations,1);
     assert.equal(result.execution.recognitions,1);
     assert.equal(result.execution.fact_sets,1);
@@ -77,7 +69,4 @@ try{
       ufi_ejecutadas_forum:forum,otros_creditos:other,financiera_no_resuelta:unresolved,
       reconciliation:'PASS'});
   }
-  console.log(JSON.stringify({source:'Azure PostgreSQL via certified SALES P1',cases:report},null,2));
-}finally{
-  await client.close();
-}
+  console.log(JSON.stringify({source:'Azure PostgreSQL via certified SALES P1 engine',cases:report},null,2));
