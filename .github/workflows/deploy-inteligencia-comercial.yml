@@ -45,6 +45,7 @@ jobs:
           docker build -f frontend/Dockerfile -t "$IMAGE" frontend
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "Image: `$IMAGE`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Apply projection CRM uniqueness migration
         shell: bash
