@@ -27,41 +27,17 @@ jobs:
           node-version: 22
 
       - name: Install MCP client for smoke test
-        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 jose@6.1.0
+        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0
 
       - name: Build independent motor-test image
         run: docker build --file Dockerfile.motor-test-azure --tag cidef-motor-test-azure:smoke .
 
-      - name: Verify local-only MCP startup, transport and tool list
+      - name: Verify anonymous MCP startup, transport and tool list
         shell: bash
         run: |
           set -euo pipefail
           docker run --detach --rm --network host --name motor-test-azure-smoke \
-            -e NODE_ENV=test -e MCP_AUTH_MODE=local-test -e PORT=39090 \
+            -e NODE_ENV=test -e PORT=39090 \
             cidef-motor-test-azure:smoke
-          trap 'docker stop motor-test-azure-smoke >/dev/null 2>&1 || true; docker stop motor-test-azure-auth-smoke >/dev/null 2>&1 || true' EXIT
+          trap 'docker stop motor-test-azure-smoke >/dev/null 2>&1 || true' EXIT
           MCP_SMOKE_URL=http://127.0.0.1:39090/api/mcp node motor-test-azure/smoke-test.js
-
-      - name: Verify Entra authentication rejects anonymous MCP requests
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --detach --rm --network host --name motor-test-azure-auth-smoke \
-            -e PORT=39091 \
-            -e MCP_ENTRA_TENANT_ID=1a38830c-0239-4e97-9b1d-bededd560934 \
-            -e MCP_ENTRA_CLIENT_ID=71a36bc5-b850-43bf-be67-e28568ef0d58 \
-            -e MCP_PUBLIC_URL=https://motor-test-azure.example.invalid \
-            cidef-motor-test-azure:smoke
-          READY=""
-          for attempt in {1..60}; do
-            READY=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:39091/healthz || true)
-            [[ "$READY" == "200" ]] && break
-            sleep 0.1
-          done
-          [[ "$READY" == "200" ]] || { echo "::error::Authenticated MCP process did not start"; exit 1; }
-          STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-            --request POST --header 'content-type: application/json' \
-            --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
-            http://127.0.0.1:39091/api/mcp)
-          [[ "$STATUS" == "401" ]] || { echo "::error::Anonymous MCP request returned HTTP $STATUS (expected 401)"; exit 1; }
-          echo "Anonymous MCP requests are rejected with HTTP 401."

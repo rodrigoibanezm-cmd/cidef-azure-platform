@@ -18,8 +18,6 @@ jobs:
       ACA_ENV: cidef-prod-env
       APP: cidef-motor-test-azure
       ACR: cidefprodacr.azurecr.io
-      MCP_CLIENT_ID: 71a36bc5-b850-43bf-be67-e28568ef0d58
-      MCP_TENANT_ID: 1a38830c-0239-4e97-9b1d-bededd560934
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -48,7 +46,7 @@ jobs:
           ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --include-inherited --query "[?roleDefinitionName=='AcrPull'] | length(@)" --output tsv)
           [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Existing AcrPull assignment for id-cidef-azure-pg-mcp is missing; no role assignment was attempted"; exit 1; }
 
-          # GitHub OIDC is used only for Azure deployment. ChatGPT users authenticate with delegated OAuth at the MCP endpoint.
+          # GitHub OIDC is used only for Azure deployment. The personal MCP endpoint accepts requests without OAuth.
           echo "IDENTITY_ID=$IDENTITY_ID" >> "$GITHUB_ENV"
 
           EXISTING_APP_JSON=$(mktemp)
@@ -87,7 +85,7 @@ jobs:
           if expected_identity not in identity:
               raise SystemExit("::error::Existing motor-test app is not attached to the reusable image-pull identity")
           if not ingress.get("external") or ingress.get("targetPort") != 3000:
-              raise SystemExit("::error::Existing motor-test app ingress is not the expected protected port 3000; refusing to change networking")
+              raise SystemExit("::error::Existing motor-test app ingress is not the expected port 3000; refusing to change networking")
           if not any(r.get("server", "").lower() == "cidefprodacr.azurecr.io" and r.get("identity") == expected_identity for r in registries):
               raise SystemExit("::error::Existing motor-test app does not use the reusable ACR identity")
           PY
@@ -103,7 +101,7 @@ jobs:
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
-      - name: Create or update only the independent motor-test Container App
+      - name: Update only the existing independent motor-test Container App
         shell: bash
         run: |
           set -euo pipefail
@@ -111,8 +109,7 @@ jobs:
           az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
           az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars \
             "AZURE_DATABASE_URL=secretref:database-url" \
-            "MCP_ENTRA_CLIENT_ID=$MCP_CLIENT_ID" \
-            "MCP_ENTRA_TENANT_ID=$MCP_TENANT_ID" \
+            --remove-env-vars MCP_ENTRA_CLIENT_ID MCP_ENTRA_TENANT_ID MCP_PUBLIC_URL \
             --output none
 
           APP_STATE_JSON=$(mktemp)
@@ -157,33 +154,10 @@ jobs:
           )
           rm -f "$APP_STATE_JSON" "$ERROR_FILE"
           [[ -n "$FQDN" ]] || { echo "::error::The independent Container App has no ingress FQDN"; exit 1; }
-          ERROR_FILE=$(mktemp)
-          UPDATED=false
-          for attempt in 1 2 3 4; do
-            if az containerapp update --resource-group "$RG" --name "$APP" --set-env-vars "MCP_PUBLIC_URL=https://$FQDN" --output none 2>"$ERROR_FILE"; then
-              UPDATED=true
-              break
-            fi
-            if grep -Eqi 'Service Unavailable|HTTPError.*503|status code: 503' "$ERROR_FILE"; then
-              if [[ "$attempt" -lt 4 ]]; then
-                echo "ARM returned HTTP 503 while setting MCP_PUBLIC_URL; retry $attempt/4."
-                sleep $((attempt * 10))
-                continue
-              fi
-              echo "::error::ARM remained unavailable after four attempts to set MCP_PUBLIC_URL"
-              rm -f "$ERROR_FILE"
-              exit 1
-            fi
-            echo "::error::Azure failed to set MCP_PUBLIC_URL with a non-transient error; see the Azure CLI step diagnostics"
-            rm -f "$ERROR_FILE"
-            exit 1
-          done
-          rm -f "$ERROR_FILE"
-          [[ "$UPDATED" == "true" ]] || { echo "::error::MCP_PUBLIC_URL was not updated"; exit 1; }
           echo "APP_URL=https://$FQDN" >> "$GITHUB_ENV"
           echo "Independent MCP endpoint: https://$FQDN/api/mcp" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verify health, Azure PostgreSQL readiness and anonymous rejection
+      - name: Verify health and Azure PostgreSQL readiness
         shell: bash
         run: |
           set -euo pipefail
@@ -198,22 +172,16 @@ jobs:
           [[ "$HEALTH" == "200" ]] || { echo "::error::motor-test health check failed"; exit 1; }
           [[ "$READY" == *'"database":"connected"'* ]] || { echo "::error::SELECT 1 readiness check against Azure PostgreSQL failed"; exit 1; }
 
-          META=$(curl --silent --fail "$APP_URL/.well-known/oauth-protected-resource")
-          [[ "$META" == *'"authorization_servers"'* ]] || { echo "::error::Entra resource metadata is missing"; exit 1; }
-          STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST \
-            --header 'content-type: application/json' \
-            --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
-            "$APP_URL/api/mcp")
-          [[ "$STATUS" == "401" ]] || { echo "::error::Anonymous MCP request returned HTTP $STATUS (expected 401)"; exit 1; }
-          API_STATUS=$(curl --silent --output /dev/null --write-out '%{http_code}' "$APP_URL/api/como-vamos?period=2026-09")
-          [[ "$API_STATUS" == "401" ]] || { echo "::error::Anonymous Cómo vamos request returned HTTP $API_STATUS (expected 401)"; exit 1; }
-          echo "Health, PostgreSQL SELECT 1, OAuth metadata and anonymous MCP/API rejection passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Health and PostgreSQL SELECT 1 readiness checks passed." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Install MCP client dependencies for authenticated integration checks
-        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 jose@6.1.0 zod@3.25.76 pg@8.16.3
+      - name: Install MCP client dependencies for anonymous integration checks
+        run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 zod@3.25.76 pg@8.16.3
+
+      - name: Verify anonymous remote MCP transport and 12 tools
+        run: MCP_SMOKE_URL="$APP_URL/api/mcp" node motor-test-azure/smoke-test.js
 
       - name: Validate live Cómo vamos P1/P2 results and P3 trace against Azure PostgreSQL
         run: node scripts/validate-como-vamos-api.js
 
-      - name: Validate motor-test tools, SALES P1, P2 determinism and P3 trace through loopback test server
-        run: node scripts/validate-motor-test-azure-p2-p3.js
+      - name: Validate anonymous MCP, SALES P1, P2 determinism and P3 trace against Azure PostgreSQL
+        run: MCP_URL="$APP_URL/api/mcp" node scripts/validate-motor-test-azure-p2-p3.js

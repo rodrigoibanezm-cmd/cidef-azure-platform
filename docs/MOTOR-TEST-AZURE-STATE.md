@@ -14,22 +14,23 @@
 - `lib/p3/executionJournal.js`: trazabilidad P3 adaptada a Azure.
 - `lib/neon.js`: adaptador de compatibilidad; usa `lib/azure-postgres.js`, no conecta a Neon.
 - `lib/azure-postgres.js`: PostgreSQL Azure por `AZURE_DATABASE_URL`, driver `pg`.
-- `motor-test-azure/server.js`: entrada HTTP independiente; reutiliza `createMcpServer()` y el transporte stateless del origen. `POST /api/mcp` exige bearer JWT Entra con scope delegado `access_as_user` o rol permitido; `GET /healthz` y `/readyz` son públicos, y `/readyz` ejecuta `SELECT 1`.
-- `motor-test-azure/package.json` y `Dockerfile.motor-test-azure`: runtime Node aislado con `jose` para validación JWT; no modifica el runtime de `cidef-pg-mcp`. `MCP_AUTH_MODE=local-test` solo funciona en modo no productivo y enlazado a loopback.
-- `.github/workflows/verify-motor-test-azure-entry.yml`: construye la imagen y verifica inicio, transporte y listado de herramientas sin secretos de base de datos. No despliega ni publica imagen.
+- `motor-test-azure/server.js`: entrada HTTP independiente basada en `api/mcp.js` del origen. Reutiliza `createMcpServer()` y el transporte MCP stateless; no valida OAuth ni bearer tokens. `POST /api/mcp` y `GET /api/como-vamos` quedan accesibles sin autenticación; `/healthz` y `/readyz` también son públicos, y `/readyz` ejecuta `SELECT 1`.
+- `motor-test-azure/package.json` y `Dockerfile.motor-test-azure`: runtime Node aislado con SDK MCP, `zod` y `pg`; sin `jose` ni dependencia de Entra.
+- `.github/workflows/verify-motor-test-azure-entry.yml`: construye la imagen y verifica inicio, transporte MCP anónimo y las 12 herramientas sin secretos de base de datos. No despliega ni publica imagen.
 
 ## Dependencias
 - El grafo de imports de `lib/mcp/server.js` contiene módulos locales en `lib/`; las dependencias externas de ejecución son `@modelcontextprotocol/sdk`, `zod` y `pg`.
 - `package.json` raíz incluye `pg`, pero no el SDK MCP ni `zod`. El paquete aislado los declara para resolver imports desde `lib/` dentro de la imagen.
-- El MCP requiere `AZURE_DATABASE_URL` para motores con acceso a datos. El inicio y `tools/list` no requieren conexión a base. `MCP_ENTRA_TENANT_ID`, `MCP_ENTRA_CLIENT_ID` y `MCP_PUBLIC_URL` son requeridos en runtime protegido.
+- `AZURE_DATABASE_URL` es la única conexión de runtime; se configura en Container Apps como secreto `database-url`. El inicio y `tools/list` no requieren conexión a base. No hay configuración de identidad MCP en runtime.
 - No usar `NEON_DATABASE_URL`, `DATABASE_URL` ni `POSTGRES_URL` como fallback.
 - Las operaciones de snapshots realizan DDL y no forman parte de las pruebas de inicio.
 
 ## Despliegue independiente preparado
-- El workflow manual [.github/workflows/deploy-motor-test-azure.yml](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/blob/main/.github/workflows/deploy-motor-test-azure.yml) construye la imagen y reutiliza `rg-cidef-prod`, ACR `cidefprodacr`, la identidad `id-cidef-azure-pg-mcp`, Container Apps Environment `cidef-prod-env` (usado por el despliegue exitoso del frontend en el Action 38809185012) y `AZURE_DATABASE_URL` del entorno `Production`. La verificación de `AcrPull` incluye asignaciones heredadas, igual que el workflow probado.
+- El workflow manual [.github/workflows/deploy-motor-test-azure.yml](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/blob/main/.github/workflows/deploy-motor-test-azure.yml) construye la imagen y reutiliza `rg-cidef-prod`, ACR `cidefprodacr`, la identidad `id-cidef-azure-pg-mcp`, Container Apps Environment `cidef-prod-env` y `AZURE_DATABASE_URL` del entorno `Production`. La verificación de `AcrPull` incluye asignaciones heredadas. El runtime se configura solo con `AZURE_DATABASE_URL`; se retiran las variables Entra antiguas.
 - El Action [39192734100](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39192734100) creó `cidef-motor-test-azure`; su respuesta de Azure muestra `provisioningState: Succeeded`, `runningStatus: Running` y una revisión lista. Después, `az containerapp show` para consultar estado/FQDN recibió HTTP 503 HTML de ARM; Azure CLI intentó parsearlo como JSON (`JSONDecodeError`). Las verificaciones de salud, DB, OAuth y herramientas quedaron omitidas. Esto confirma el estado al cierre de ese Action, no el estado actual en vivo.
-- Se registró un intento de `Microsoft.Authorization/roleAssignments/write` durante `az containerapp create --registry-identity`; fue no autorizado pero no bloqueó la creación. El workflow actual es update-only: exige que la Container App exista, revisa el `AcrPull` preexistente (incluyendo heredados) y no llama a la ruta de creación que activa el intento automático de asignar el rol. Los comandos de lectura de estado y la actualización de `MCP_PUBLIC_URL` reintentan hasta cuatro veces ante HTTP 503; otros errores no se reintentan.
-- Las verificaciones de health, `SELECT 1`, metadata OAuth, rechazo anónimo (`401`), herramientas, SALES P1, P2 y P3 permanecen sin confirmar para el endpoint remoto: no llegaron a ejecutarse en 39192734100. No se pudo consultar el estado actual en vivo desde esta sesión (Azure CLI no está disponible localmente y la llamada HTTP al endpoint agotó el tiempo de espera).
+- Se registró un intento de `Microsoft.Authorization/roleAssignments/write` durante `az containerapp create --registry-identity`; fue no autorizado pero no bloqueó la creación. El workflow actual es update-only: exige que la Container App exista y verifica el `AcrPull` preexistente, sin asignar roles ni crear recursos. Las lecturas de estado reintentan hasta cuatro veces ante HTTP 503.
+- El último despliegue comprobado todavía corresponde a la imagen anterior con Entra. Los cambios de acceso anónimo están preparados en `main`, pero no se han desplegado; no se consultó Azure en vivo durante esta actualización.
+- El workflow manual prepara health, `SELECT 1`, listado anónimo de 12 herramientas, SALES P1 real, ejecución P2 repetible y `run_trace` contra el MCP remoto. La validación P2/P3 registra las trazas normales P3. No se ha ejecutado el workflow de despliegue con esta versión.
 
 ## Validación comprobada en Azure
 - Esquema P3: inicializado y existente en Azure. Action [39137710513](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39137710513) pasó conexión, `SELECT 1`, transacción `READ ONLY` + `ROLLBACK` y comparación de columnas, claves e índices requeridos por `executionJournal.js`: 4 claves requeridas, 0 diferencias.
@@ -78,6 +79,6 @@
 - No se añadieron ni ejecutaron tests unitarios de las otras unidades en esta actualización; se conserva su estado previo.
 - `forum_snapshot_transitions` necesita dos snapshots diarios certificados distintos; el Action buscará snapshots en los 30 días previos. Si no los encuentra, registrará `REQUIRES_DATA`.
 - No declarar certificación completa de P2 ni paridad funcional total.
-- Despliegue del servicio independiente `motor-test-azure`, OAuth delegado de extremo a extremo con ChatGPT e integración desde ChatGPT siguen sin validar. El MCP original en `cidef-data-loader` no valida autenticación en `api/mcp.js`; la entrada Azure sí exige JWT Entra.
-- ChatGPT requiere OAuth de usuario para un MCP protegido; no usa client credentials ni claves API personalizadas. La entrada anuncia `access_as_user`, pero el registro Entra debe permitir el callback OAuth de ChatGPT y emitir el scope/audience esperado. Ese flujo interactivo no se ha probado.
+- El despliegue del código sin OAuth y la conexión desde ChatGPT siguen pendientes. Tras el despliegue, cualquier cliente que conozca la URL podrá invocar las herramientas MCP y leer la ruta `/api/como-vamos`; no hay autenticación ni restricción por usuario.
+- La nueva validación remota de P1/P2/P3 está preparada en el workflow manual; aún no se ha ejecutado y, por tanto, no valida el endpoint desplegado.
 - Operaciones de snapshots en Azure no validadas; implican DDL y no se ejecutaron.

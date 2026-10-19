@@ -17,7 +17,7 @@ async function unusedPort() {
 const port = await unusedPort();
 const endpoint = `http://127.0.0.1:${port}`;
 const child = spawn(process.execPath, [fileURLToPath(new URL('../motor-test-azure/server.js', import.meta.url))], {
-  env: { ...process.env, PORT: String(port), MCP_AUTH_MODE: 'local-test', NODE_ENV: 'test' },
+  env: { ...process.env, PORT: String(port), NODE_ENV: 'test' },
   stdio: 'ignore',
 });
 try {
