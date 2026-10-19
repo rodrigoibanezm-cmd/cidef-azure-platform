@@ -171,6 +171,15 @@ jobs:
           )
           rm -f "$APP_STATE_JSON" "$ERROR_FILE"
           [[ -n "$FQDN" ]] || { echo "::error::The independent Container App has no ingress FQDN"; exit 1; }
+
+          REVISION_MODE=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.configuration.activeRevisionsMode --output tsv)
+          if [[ "$REVISION_MODE" == "Multiple" ]]; then
+            az containerapp ingress traffic set --resource-group "$RG" --name "$APP" --revision-weight latest=100 --output none
+          fi
+          DEPLOYED_IMAGE=$(az containerapp show --resource-group "$RG" --name "$APP" --query properties.template.containers[0].image --output tsv)
+          [[ "$DEPLOYED_IMAGE" == "$IMAGE" ]] || { echo "::error::Latest Container App revision image does not match the image just built"; exit 1; }
+          echo "Active revision mode: $REVISION_MODE; deployed image: $DEPLOYED_IMAGE"
+
           echo "APP_URL=https://$FQDN" >> "$GITHUB_ENV"
           echo "Independent MCP endpoint: https://$FQDN/api/mcp" >> "$GITHUB_STEP_SUMMARY"
 

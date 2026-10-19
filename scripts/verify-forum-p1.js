@@ -4,13 +4,15 @@ import { describeForum, observeForumEvidence } from '../lib/data-floor/forumCert
 
 const period = '2026-09';
 const cutoff = '2026-09-30';
+// Current Neon P1 state after the 2026-10-18 snapshot; September cohorts retain current outcomes.
+// Operation 4662539 is now CURSE (fecha_curse 2026-10-16); 4545080 is PRECURSE, not APROBADA.
 const neonBaseline = {
   QUOTATIONS: 5890,
   APPLICATIONS: 4847,
   CURSES: 381,
   UFIS: 383,
-  COHORT_CONVERTED: 348,
-  COHORT_APPROVED: 1818,
+  COHORT_CONVERTED: 349,
+  COHORT_APPROVED: 1817,
   COHORT_EXPIRED: 868,
   COHORT_REJECTED: 1055,
 };
