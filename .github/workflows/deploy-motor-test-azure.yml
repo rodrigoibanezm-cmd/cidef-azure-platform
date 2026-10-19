@@ -31,7 +31,7 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Preflight existing resources, DB secret and MCP authorization
+      - name: Preflight existing Azure resources and DB secret
         shell: bash
         run: |
           set -euo pipefail
@@ -57,25 +57,7 @@ jobs:
           ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --query "[?roleDefinitionName=='AcrPull'] | length(@)" --output tsv)
           [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]] || { echo "::error::Existing AcrPull assignment for id-cidef-azure-pg-mcp is missing; no role assignment was attempted"; exit 1; }
 
-          # The GitHub OIDC identity must already hold an app role accepted by the existing Entra-protected MCP.
-          MCP_ACCESS_TOKEN=$(az account get-access-token --resource "api://$MCP_CLIENT_ID" --query accessToken --output tsv)
-          [[ -n "$MCP_ACCESS_TOKEN" ]] || { echo "::error::Could not obtain an Entra token for the existing motor-test API"; exit 1; }
-          echo "::add-mask::$MCP_ACCESS_TOKEN"
-          export MCP_ACCESS_TOKEN
-          python3 - <<'PY'
-          import base64, json, os
-          try:
-              token=os.environ["MCP_ACCESS_TOKEN"]
-              payload=token.split(".")[1]
-              claims=json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-              roles=claims.get("roles", [])
-              allowed=any(role.lower() in {"pg.read","pg_read","pg.write","pg_write","pg.admin","pg_admin"} for role in roles)
-          except Exception:
-              allowed=False
-          if not allowed:
-              raise SystemExit("::error::The OIDC identity lacks an existing pg.read/pg.write/pg.admin Entra app role; no deployment was started")
-          PY
-          echo "MCP_ACCESS_TOKEN=$MCP_ACCESS_TOKEN" >> "$GITHUB_ENV"
+          # GitHub OIDC is used only for Azure deployment. ChatGPT users authenticate with delegated OAuth at the MCP endpoint.
           echo "IDENTITY_ID=$IDENTITY_ID" >> "$GITHUB_ENV"
           echo "ACA_ENV=$ACA_ENV" >> "$GITHUB_ENV"
 
@@ -178,5 +160,5 @@ jobs:
       - name: Install MCP client dependencies for authenticated integration checks
         run: npm install --no-save --no-package-lock --ignore-scripts @modelcontextprotocol/sdk@1.26.0 jose@6.1.0 zod@3.25.76 pg@8.16.3
 
-      - name: Validate authenticated tool listing, SALES P1, P2 determinism and P3 trace
-        run: MCP_URL="$APP_URL/api/mcp" node scripts/validate-motor-test-azure-p2-p3.js
+      - name: Validate tools, Azure SALES P1, P2 determinism and P3 trace through loopback test server
+        run: node scripts/validate-motor-test-azure-p2-p3.js
