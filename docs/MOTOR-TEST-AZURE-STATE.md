@@ -44,7 +44,7 @@
 ## Matriz P2
 - Registro de origen y Azure revisados en `main`: ambos tienen el mismo SHA de `lib/p2/registry.js` (`d3a3deeab679cdf84bdca9893528ae22e9e0f3c2`), 13 unidades activas y las mismas versiones/contratos.
 - El Action manual [validate-motor-test-azure-p2-matrix.yml](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/workflows/validate-motor-test-azure-p2-matrix.yml) usa `AZURE_DATABASE_URL` del entorno `Production`: ejecuta dos veces cada unidad pendiente con evidencia P1 obtenida en la misma ejecución, compara resultados y consulta `run_trace`. En el run [39154653203](https://github.com/rodrigoibanezm-cmd/cidef-azure-platform/actions/runs/39154653203), las cuatro unidades históricas aquí señaladas se bloquearon antes de P2 con `HISTORICAL_SERIES_NOT_CERTIFIED`.
-- `PASS` histórico corresponde a la ejecución exitosa del Action 39141980346. Las otras unidades permanecen pendientes hasta ejecutar el Action. El Action registra `FAIL`, `REQUIRES_DATA` o `BLOCKED` por unidad y continúa con las independientes.
+- `PASS` histórico corresponde a la ejecución exitosa del Action 39141980346. El Action registra `FAIL`, `REQUIRES_DATA` o `BLOCKED` por unidad y continúa con las independientes. Esta actualización reproduce únicamente los tests unitarios originales de los cuatro motores indicados; no cambia el estado de las demás unidades.
 
 | Unidad (contrato) | Slots P1 requeridos por el contrato original | Estado comprobado |
 |---|---|---|
@@ -69,7 +69,7 @@
 
 ## Pendiente
 - La integración P1→P2 real de estas cuatro unidades sigue pendiente: el Action 39154653203 recibió `HISTORICAL_SERIES_NOT_CERTIFIED` antes de invocar P2. Los slots de la tabla describen los contratos; no prueban disponibilidad de evidencia en Azure.
-- No hay validación de ejecución de las otras ocho unidades pendientes hasta ejecutar el Action manual.
+- No se añadieron ni ejecutaron tests unitarios de las otras unidades en esta actualización; se conserva su estado previo.
 - `forum_snapshot_transitions` necesita dos snapshots diarios certificados distintos; el Action buscará snapshots en los 30 días previos. Si no los encuentra, registrará `REQUIRES_DATA`.
 - No declarar certificación completa de P2 ni paridad funcional total.
 - Despliegue del servicio independiente `motor-test-azure`, autenticación externa e integración desde ChatGPT no están validados por estos Actions.
