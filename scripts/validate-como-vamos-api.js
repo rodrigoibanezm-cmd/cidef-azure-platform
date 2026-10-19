@@ -61,7 +61,7 @@ try {
     database: 'AZURE_POSTGRESQL',
     period,
     run_id: payload.run_id,
-    indicators: payload.indicators.map(({ id, status, certified, cutoff, evidence_ids, limitations }) => ({ id, status, certified, cutoff, evidence_count: evidence_ids?.length ?? 0, limitations })),
+    indicators: payload.indicators.map(({ id, status, certified, unit, values, series, cutoff, evidence_id, evidence_ids, certification, limitations }) => ({ id, status, certified, unit, values, series, cutoff, evidence_id, evidence_ids, certification, limitations })),
     p3_p1_events: events.filter(event => event.floor === 'P1').length,
     p3_p2_events: events.filter(event => event.floor === 'P2').length,
     rvm_share: share.status,
