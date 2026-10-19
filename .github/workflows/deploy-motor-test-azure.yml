@@ -190,11 +190,11 @@ jobs:
       - name: Verify anonymous remote MCP transport and 12 tools
         run: MCP_SMOKE_URL="$APP_URL/api/mcp" node motor-test-azure/smoke-test.js
 
+      - name: Reconcile SALES recognized VINs by store and financing entity in Azure PostgreSQL
+        run: MCP_URL="$APP_URL/api/mcp" node scripts/validate-sales-financial-p1.js
+
       - name: Validate live Cómo vamos P1/P2 results and P3 trace against Azure PostgreSQL
         run: node scripts/validate-como-vamos-api.js
 
       - name: Validate anonymous MCP, SALES P1, P2 determinism and P3 trace against Azure PostgreSQL
         run: MCP_URL="$APP_URL/api/mcp" node scripts/validate-motor-test-azure-p2-p3.js
-
-      - name: Reconcile SALES recognized VINs by store and financing entity in Azure PostgreSQL
-        run: MCP_URL="$APP_URL/api/mcp" node scripts/validate-sales-financial-p1.js
