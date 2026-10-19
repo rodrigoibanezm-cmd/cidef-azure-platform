@@ -63,121 +63,18 @@ jobs:
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
           echo "Image: `$IMAGE`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Apply projection CRM uniqueness migration
-        shell: bash
-        env:
-          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
-            echo "::error::AZURE_DATABASE_URL is required from the existing Production environment secret."
-            exit 1
-          fi
-          if ! command -v psql >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install --yes postgresql-client
-          fi
-          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-            --file frontend/scripts/allow-multiple-projections-per-crm.sql
-          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-            --file frontend/scripts/verify-multiple-projections-per-crm.sql
-          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 \
-            --file frontend/scripts/create-weekly-projection-admin-snapshots.sql
-
-      - name: Measure live projection dashboard baseline
-        continue-on-error: true
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json, os, time, urllib.request
-          from datetime import datetime, timedelta
-          from zoneinfo import ZoneInfo
-          base = "https://cidef-inteligencia-comercial.calmforest-1c67ab46.chilecentral.azurecontainerapps.io"
-          today = datetime.now(ZoneInfo("America/Santiago")).date()
-          monday = today - timedelta(days=today.weekday())
-          def get(path):
-              start = time.perf_counter()
-              with urllib.request.urlopen(base + path, timeout=240) as response:
-                  body = response.read()
-                  if response.status != 200: raise RuntimeError(f"HTTP {response.status}: {path}")
-              return (time.perf_counter() - start) * 1000, json.loads(body)
-          timings = {}
-          try:
-              branches_ms, branches = get("/api/weekly-projections/sucursales")
-              store = str(branches["sucursales"][0]["sucursal_id"])
-              date, week = today.isoformat(), monday.isoformat()
-              paths = [
-                  ("company_admin", f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}"),
-                  ("store_admin", f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}&sucursal_id={store}"),
-                  ("company_finance", f"/api/weekly-projections/company-finance?cutoff_date={date}"),
-                  ("store_finance", f"/api/weekly-projections/company-finance?cutoff_date={date}&sucursal_id={store}"),
-                  ("seller_detail", f"/api/weekly-projections/forum-sellers?sucursal_id={store}&cutoff_date={date}"),
-              ]
-              timings["branch_list_ms"] = round(branches_ms)
-              for name, path in paths:
-                  elapsed, _ = get(path)
-                  timings[name + "_ms"] = round(elapsed)
-          except Exception as error:
-              timings["baseline_unavailable"] = str(error)
-          print("Live projection dashboard baseline: " + json.dumps(timings))
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("### Proyección admin: medición previa\n\n")
-              if "baseline_unavailable" in timings:
-                  summary.write("La versión previa no respondió durante el rollout: " + timings["baseline_unavailable"] + "\n")
-              summary.write("```json\n" + json.dumps(timings, indent=2) + "\n```\n")
-          PY
-
       - name: Deploy frontend to existing Azure Container Apps environment
         shell: bash
-        env:
-          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
         run: |
           set -euo pipefail
-          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
-            echo "::error::AZURE_DATABASE_URL is required from the existing Production environment secret."
-            exit 1
-          fi
           az extension add --name containerapp --upgrade --yes
           RG="rg-cidef-prod"
           APP="cidef-inteligencia-comercial"
-          ENV="cidef-prod-env"
-          IDENTITY_NAME="id-cidef-azure-pg-mcp"
-          IDENTITY_ID=$(az identity show -g "$RG" -n "$IDENTITY_NAME" --query id -o tsv)
-          PRINCIPAL_ID=$(az identity show -g "$RG" -n "$IDENTITY_NAME" --query principalId -o tsv)
-          ACR_ID=$(az acr show -g "$RG" -n cidefprodacr --query id -o tsv)
-          ACR_PULL_COUNT=$(az role assignment list --assignee-object-id "$PRINCIPAL_ID" --scope "$ACR_ID" --include-inherited --query "[?roleDefinitionName=='AcrPull'] | length(@)" -o tsv)
-          if ! [[ "$ACR_PULL_COUNT" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::Existing image-pull identity $IDENTITY_NAME has no verified AcrPull on cidefprodacr (including inherited assignments). No permissions changed."
+          if ! az containerapp show -g "$RG" -n "$APP" --output none 2>/dev/null; then
+            echo "::error::Expected existing Container App $APP in $RG was not found; refusing to create infrastructure."
             exit 1
           fi
-
-          retry_az() {
-            local attempt=1 max_attempts=5
-            until "$@"; do
-              if [[ "$attempt" -ge "$max_attempts" ]]; then return 1; fi
-              sleep $((attempt * 10))
-              attempt=$((attempt + 1))
-            done
-          }
-
-          if az containerapp show -g "$RG" -n "$APP" --output none 2>/dev/null; then
-            retry_az az containerapp secret set -g "$RG" -n "$APP" --secrets "azure-database-url=$AZURE_DATABASE_URL" --output none
-            retry_az az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "AZURE_DATABASE_URL=secretref:azure-database-url" --output none
-          else
-            az containerapp create \
-              -g "$RG" -n "$APP" \
-              --environment "$ENV" \
-              --image "$IMAGE" \
-              --user-assigned "$IDENTITY_ID" \
-              --registry-server cidefprodacr.azurecr.io \
-              --registry-identity "$IDENTITY_ID" \
-              --secrets "azure-database-url=$AZURE_DATABASE_URL" \
-              --env-vars "AZURE_DATABASE_URL=secretref:azure-database-url" \
-              --ingress external --target-port 3000 \
-              --min-replicas 0 --max-replicas 1 \
-              --cpu 0.5 --memory 1Gi \
-              --output none
-          fi
+          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --output none
           FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           test -n "$FQDN"
           echo "FRONT_URL=https://$FQDN" >> "$GITHUB_ENV"
@@ -190,62 +87,33 @@ jobs:
           curl --fail --show-error --location --retry 8 --retry-delay 5 --retry-connrefused "$FRONT_URL/" --output /dev/null
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/cierre-mensual" --output /dev/null
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/como-vamos" --output /dev/null
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/proyeccion-semanal.html" --output /dev/null
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/proyeccion-admin.html" --output /dev/null
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/proyeccion-semanal.html" --output /tmp/proyeccion-semanal.html
+          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/proyeccion-admin.html" --output /tmp/proyeccion-admin.html
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/health/database" --output /dev/null
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/sucursales" --output /dev/null
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/modelos" --output /dev/null
-          echo "Home, existing modules, projections pages, Azure PostgreSQL health, branch and model reads succeeded." >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Verify projection snapshots and navigation cache
-        shell: bash
-        env:
-          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
-        run: |
-          set -euo pipefail
           python3 - <<'PY'
-          import json, os, time, urllib.request
-          from datetime import datetime, timedelta
-          from zoneinfo import ZoneInfo
-          base = "https://cidef-inteligencia-comercial.calmforest-1c67ab46.chilecentral.azurecontainerapps.io"
-          today = datetime.now(ZoneInfo("America/Santiago")).date()
-          monday = today - timedelta(days=today.weekday())
-          def get(path):
-              start = time.perf_counter()
-              with urllib.request.urlopen(base + path, timeout=240) as response:
-                  data = json.loads(response.read())
-                  if response.status != 200 or not data.get("ok"):
-                      raise RuntimeError(f"HTTP/API failure for {path}: {data}")
-              return round((time.perf_counter() - start) * 1000), data
-          _, branches = get("/api/weekly-projections/sucursales")
-          store = str(branches["sucursales"][0]["sucursal_id"])
-          date, week = today.isoformat(), monday.isoformat()
-          paths = {
-              "company_admin": f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}",
-              "store_admin": f"/api/weekly-projections/admin?week_start={week}&cutoff_date={date}&sucursal_id={store}",
-              "company_finance": f"/api/weekly-projections/company-finance?cutoff_date={date}",
-              "store_finance": f"/api/weekly-projections/company-finance?cutoff_date={date}&sucursal_id={store}",
-              "seller_detail": f"/api/weekly-projections/forum-sellers?sucursal_id={store}&cutoff_date={date}",
+          from pathlib import Path
+          weekly = Path('/tmp/proyeccion-semanal.html').read_text()
+          admin = Path('/tmp/proyeccion-admin.html').read_text()
+          if len(weekly) < 1000:
+              raise SystemExit('Weekly projection page response is unexpectedly small')
+          cards = admin.count('<article class="projection-card finance-card">')
+          if cards != 4:
+              raise SystemExit(f'Expected the restored four finance cards, found {cards}')
+          required = {
+              'daily snapshot timestamp': 'id="snapshotUpdated"',
+              'snapshot refresh button': 'id="refreshSnapshots"',
+              'Ventas indicator': '>Ventas</h2>',
+              'Pre-cursados indicator': 'Pre-cursados',
+              'projection charts': '<canvas',
+              'projection tables': '<table',
           }
-          timings = {}
-          for name, path in paths.items():
-              refresh_path = path + ("&" if "?" in path else "?") + "refresh=1"
-              refresh_ms, refreshed = get(refresh_path)
-              navigation_ms, reused = get(path)
-              if reused.get("snapshot", {}).get("cache_hit") is not True:
-                  raise RuntimeError(f"Expected a daily snapshot cache hit after forced calculation: {name}")
-              if not refreshed.get("snapshot", {}).get("updated_at") or not reused.get("snapshot", {}).get("updated_at"):
-                  raise RuntimeError(f"Snapshot timestamp missing: {name}")
-              timings[name] = {"refresh_ms": refresh_ms, "navigation_ms": navigation_ms, "cache_hit": True, "updated_at": reused["snapshot"]["updated_at"]}
-          company_return_ms, company_return = get(paths["company_admin"])
-          if company_return.get("snapshot", {}).get("cache_hit") is not True:
-              raise RuntimeError("Company view recalculated after navigating back from Store")
-          timings["company_return_after_store"] = {"navigation_ms": company_return_ms, "cache_hit": True}
-          print(json.dumps(timings, indent=2))
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              summary.write("### Proyección admin: snapshots y tiempos después del deploy\n\n```json\n")
-              summary.write(json.dumps(timings, indent=2) + "\n```\n")
+          missing = [name for name, marker in required.items() if marker not in admin]
+          if missing:
+              raise SystemExit('Restored admin design is missing: ' + ', '.join(missing))
+          print('Projection pages returned HTTP 200; restored four-card layout, indicators, charts, tables and snapshot controls are present.')
           PY
-          psql "$AZURE_DATABASE_URL" --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align \
-            --command "SELECT count(*) >= 5 AND count(DISTINCT dimension) >= 3 FROM weekly_projection_admin_snapshots WHERE snapshot_day=(now() AT TIME ZONE 'America/Santiago')::date AND report_key IN ('admin','company-finance','forum-sellers')" | grep -qx t
-          echo "Daily snapshots persisted for company, store and seller dimensions; repeat reads and company-after-store navigation hit the existing cache." >> "$GITHUB_STEP_SUMMARY"
+          echo "Front-only deployment verified: no database migrations or snapshot-generating requests were run." >> "$GITHUB_STEP_SUMMARY"
+          echo "Home, existing pages, projections pages, Azure PostgreSQL health and read-only branch/model endpoints responded." >> "$GITHUB_STEP_SUMMARY"
+
