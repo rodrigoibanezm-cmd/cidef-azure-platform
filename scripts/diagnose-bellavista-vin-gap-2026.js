@@ -198,6 +198,29 @@ async function main() {
     aliasByRaw.get(key).push(row);
   }
 
+  const virginiaRawAliases = unique(aliasRows.flatMap((row) => [row.valor_raw, row.usuario_canonico]).map(norm));
+  const virginiaRawRows = await queryDb(`
+    SELECT v.id::text AS raw_id,
+      upper(trim(v.nro_vin_chasis::text)) AS vin,
+      ${dateExpr}::text AS fecha_factura,
+      coalesce(v.nro_factura::text, v.factura::text) AS numero_factura,
+      v.desc_sucursal_vta AS sucursal_raw,
+      v.nombre_usuario AS vendedor_raw,
+      pe.persona_id::text AS vendedor_persona_id,
+      pe.nombre_canonico AS vendedor_canonico,
+      v.categoria_cliente
+    FROM public.ventas_raw v
+    LEFT JOIN public.personas_master pe
+      ON upper(trim(pe.usuario_canonico))=upper(trim(v.nombre_usuario))
+    WHERE ${dateExpr} BETWEEN $1::date AND $2::date
+      AND nullif(trim(v.nro_vin_chasis::text),'') IS NOT NULL
+      AND (
+        pe.persona_id::text = ANY($3::text[])
+        OR lower(translate(trim(v.nombre_usuario), 'ÁÉÍÓÚÜÑáéíóúüñ', 'AEIOUUNaeiouun')) = ANY($4::text[])
+      )
+    ORDER BY ${dateExpr}, upper(trim(v.nro_vin_chasis::text)), v.id
+  `, [MONTH_START, CUTOFF, [...virginiaPersonIds], virginiaRawAliases]);
+
   const invoices = rawRows.flatMap((row) => [row.numero_factura, row.factura, row.nro_factura]);
   const operations = rawRows.map((row) => row.nro_operacion);
   const creditNotes = await loadCreditNotes(rawVins, invoices, operations);
@@ -231,6 +254,8 @@ async function main() {
       admin_bellavista_distinct_vins: bellavistaByVin.size,
       admin_virginia_tampoa_rows: adminVirginiaCount,
       admin_rows_with_raw_seller_alias_for_virginia: virginiaAliasRows.length,
+      raw_virginia_rows_all_stores: virginiaRawRows.length,
+      raw_virginia_distinct_vins_all_stores: unique(virginiaRawRows.map((row) => row.vin)).length,
       raw_duplicate_vins: duplicateRaw.length,
       admin_duplicate_vins: duplicateAdmin.length,
       raw_rows_without_seller: noSeller.length,
@@ -281,6 +306,7 @@ async function main() {
     duplicate_admin_vins: duplicateAdmin,
     raw_rows_without_seller: noSeller.map((row) => ({ vin: row.vin, fecha_factura: row.fecha_factura, numero_factura: row.numero_factura, vendedor_raw: row.vendedor_raw, vendedor_canonico: row.vendedor_canonico, categoria_cliente: row.categoria_cliente })),
     virginia_tampoa_aliases: aliasRows,
+    raw_virginia_tampoa_all_stores: virginiaRawRows,
     admin_virginia_tampoa_vins: virginiaRows.map((row) => ({ vin: row.vin, fecha_factura: row.fecha_venta, vendedor_raw: row.vendedor, vendedor_canonico: row.vendedor_nombre, persona_id: row.persona_id })),
     endpoint_rows_matching_virginia_alias_but_not_canonical_name: virginiaAliasRows.map((row) => ({ vin: row.vin, fecha_factura: row.fecha_venta, vendedor_raw: row.vendedor, vendedor_canonico: row.vendedor_nombre, persona_id: row.persona_id })),
     credit_notes: creditNotes,
