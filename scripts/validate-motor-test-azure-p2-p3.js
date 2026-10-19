@@ -36,7 +36,7 @@ async function unusedPort() {
 
 async function waitForHealth(url, child) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (child.exitCode !== null) throw new Error('MCP process exited before becoming ready');
+    if (child && child.exitCode !== null) throw new Error('MCP process exited before becoming ready');
     try {
       const response = await fetch(url);
       if (response.ok) return;
@@ -68,19 +68,27 @@ const periodToDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() -
 const periodFromDate = new Date(Date.UTC(periodToDate.getUTCFullYear(), periodToDate.getUTCMonth() - 2, 1));
 const periodFrom = periodFromDate.toISOString().slice(0, 7);
 const periodTo = periodToDate.toISOString().slice(0, 7);
-const port = await unusedPort();
-const mcpUrl = 'http://127.0.0.1:' + port + '/api/mcp';
-const child = spawn(process.execPath, [
+const deployedUrl = process.env.MCP_URL;
+const accessToken = process.env.MCP_ACCESS_TOKEN;
+if (deployedUrl && !accessToken) {
+  throw new Error('MCP_ACCESS_TOKEN is required when MCP_URL targets the deployed endpoint.');
+}
+const port = deployedUrl ? null : await unusedPort();
+const mcpUrl = deployedUrl || ('http://127.0.0.1:' + port + '/api/mcp');
+const child = deployedUrl ? null : spawn(process.execPath, [
   fileURLToPath(new URL('../motor-test-azure/server.js', import.meta.url)),
 ], {
   env: { ...process.env, PORT: String(port), NODE_ENV: 'test', MCP_AUTH_MODE: 'local-test' },
   stdio: 'ignore',
 });
+const transportOptions = accessToken
+  ? { requestInit: { headers: { Authorization: 'Bearer ' + accessToken } } }
+  : {};
 let client;
 try {
   await waitForHealth(new URL('/healthz', mcpUrl), child);
   client = new Client({ name: 'motor-test-azure-p2-p3-validation', version: '1.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl)));
+  await client.connect(new StreamableHTTPClientTransport(new URL(mcpUrl), transportOptions));
 
   const listed = await client.listTools();
   const toolNames = new Set(listed.tools.map((tool) => tool.name));
@@ -207,6 +215,7 @@ try {
   console.log(JSON.stringify({
     adapter: 'lib/neon.js -> lib/azure-postgres.js',
     neon_connection_or_fallback: 'NONE',
+    mcp_target: deployedUrl ? 'deployed' : 'loopback-test',
     mcp_http_transport: 'PASS',
     p2_discover: 'PASS',
     p2_describe: 'PASS',
@@ -225,7 +234,7 @@ try {
   }));
 } finally {
   await client?.close().catch(() => {});
-  if (child.exitCode === null) {
+  if (child && child.exitCode === null) {
     child.kill('SIGTERM');
     await Promise.race([
       new Promise((resolve) => child.once('exit', resolve)),
