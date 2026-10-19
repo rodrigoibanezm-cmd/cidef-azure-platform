@@ -1,0 +1,52 @@
+name: Compare historical SALES certification Neon vs Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-history:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 60
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      CIDEF_ORIGIN_PATH: cidef-data-loader
+    steps:
+      - name: Checkout Azure repository
+        uses: actions/checkout@v4
+
+      - name: Checkout certified source at pinned commit
+        uses: actions/checkout@v4
+        with:
+          repository: rodrigoibanezm-cmd/cidef-data-loader
+          ref: f74022515015e48725da60af8b18a120b7ddf9c1
+          path: cidef-data-loader
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install source database adapters
+        run: npm install --no-save --no-package-lock --ignore-scripts --prefix cidef-data-loader pg@8.16.3 @neondatabase/serverless@1.0.1
+
+      - name: Syntax-check diagnostic
+        run: node --check scripts/compare-sales-historical-certification-neon-azure.js
+
+      - name: Compare certified read-only history on Neon and Azure
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${NEON_DATABASE_URL:-}" ]]; then
+            echo "::error::NEON_DATABASE_URL is missing from the Production environment"
+            exit 1
+          fi
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::AZURE_DATABASE_URL is missing from the Production environment"
+            exit 1
+          fi
+          node scripts/compare-sales-historical-certification-neon-azure.js
