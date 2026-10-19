@@ -37,6 +37,7 @@ jobs:
           ref: f74022515015e48725da60af8b18a120b7ddf9c1
           path: cidef-data-loader
           token: ${{ secrets.CIDEF_DATA_LOADER_READ_TOKEN }}
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
