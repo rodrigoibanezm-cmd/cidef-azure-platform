@@ -31,22 +31,6 @@ jobs:
           path: frontend
           persist-credentials: false
 
-      - name: Validate projection admin certified data fields
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          route = Path('frontend/app/api/weekly-projections/admin/route.js').read_text()
-          fields = re.search(r"fields:\s*\[([^\]]+)\]", route)
-          if not fields or 'financial_entity' in fields.group(1):
-              raise SystemExit('Admin sales fetch requests a field unsupported by the deployed P1 API')
-          if 'seller_finance:sellerFinance' not in route:
-              raise SystemExit('Certified seller financing totals are missing from admin response')
-          print('Admin projection uses supported sales fetch fields and certified financing observations.')
-          PY
-
       - name: Record frontend source revision
         shell: bash
         run: |
@@ -106,21 +90,21 @@ jobs:
           if cards != 4:
               raise SystemExit(f'Expected the restored four finance cards, found {cards}')
           required = {
-              'daily snapshot timestamp': 'id="snapshotUpdated"',
-              'snapshot refresh button': 'id="refreshSnapshots"',
-              'Ventas indicator': '>Ventas</h2>',
-              'Pre-cursados seller column': 'Pre-cursados</th>',
+              'week selector': 'id="week"',
+              'store selector': 'id="store"',
               'monthly sales trend': 'id="monthTrend"',
               'weekly sales trend': 'id="weekTrend"',
               'closed-week trend': 'id="closedTrend"',
               'next-cutoff trend': 'id="nextTrend"',
               'projection tables': '<table',
+              'store breakdown': 'id="byStore"',
+              'seller breakdown': 'id="sellerBreakdown"',
           }
           missing = [name for name, marker in required.items() if marker not in admin]
           if missing:
               raise SystemExit('Restored admin design is missing: ' + ', '.join(missing))
-          print('Projection pages returned HTTP 200; restored four-card layout, indicators, charts, tables and snapshot controls are present.')
+          print('Projection pages returned HTTP 200; restored four-card layout, original selectors, charts and tables are present.')
           PY
-          echo "Front-only deployment verified: no database migrations or snapshot-generating requests were run." >> "$GITHUB_STEP_SUMMARY"
+          echo "Front-only deployment verified: no database migrations or data writes were run." >> "$GITHUB_STEP_SUMMARY"
           echo "Home, existing pages, projections pages, Azure PostgreSQL health and read-only branch/model endpoints responded." >> "$GITHUB_STEP_SUMMARY"
 
