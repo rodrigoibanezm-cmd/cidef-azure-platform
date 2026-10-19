@@ -1,3 +1,4 @@
+// Server-side aggregation of certified P1/P2 evidence with P3 lineage.
 import { randomUUID } from 'node:crypto';
 import { observeDataSource } from '../lib/data-floor/registry.js';
 import { executeP2 } from '../lib/p2/execute.js';
