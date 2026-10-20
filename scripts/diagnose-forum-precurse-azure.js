@@ -4,7 +4,7 @@ import { describeForum, fetchForum, observeForumEvidence } from '../lib/data-flo
 
 const markdown = [];
 const add = (line = '') => markdown.push(line);
-const md = (value) => String(value ?? '').replaceAll('|', '\\|').replaceAll('\\n', ' ');
+const md = (value) => String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
 const normalized = (value) => String(value ?? '').trim().toUpperCase();
 const sum = (members) => members.reduce((total, row) => total + Number(row.value || 0), 0);
 
@@ -24,7 +24,7 @@ try {
   assert.equal(company.evidence_version, contract.version);
   assert.equal(company.payload.rule, contract.measures.PRECURSE.rule);
   const snapshotDate = company.temporal.snapshot_date;
-  assert.match(snapshotDate, /^\\d{4}-\\d{2}-\\d{2}$/);
+  assert.match(snapshotDate, /^\d{4}-\d{2}-\d{2}$/);
 
   const dimensional = {};
   for (const dimension of ['STORE', 'SELLER']) {
@@ -148,7 +148,7 @@ try {
   add('---');
   add('Este reporte proviene de consultas de lectura a PostgreSQL Azure mediante los motores FORUM P1 existentes. No se escribió en tablas.');
 
-  const report = markdown.join('\\n') + '\\n';
+  const report = markdown.join('\n') + '\n';
   console.log(report);
   if (process.env.GITHUB_STEP_SUMMARY) {
     const fs = await import('node:fs/promises');
