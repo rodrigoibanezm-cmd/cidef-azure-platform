@@ -20,6 +20,18 @@ const universeView = `
           r.loaded_at DESC
       ) AS rn
     FROM public.forum_funnel_raw r
+  ), latest_precurse_snapshot AS (
+    SELECT max(snapshot_date) AS snapshot_date
+    FROM public.forum_funnel_raw
+    WHERE source_type = 'PRECURSE'
+  ), current_precurse AS (
+    SELECT r.numero_operacion,
+      max(r.cantidad_vehiculo) AS cantidad_vehiculo
+    FROM public.forum_funnel_raw r
+    CROSS JOIN latest_precurse_snapshot latest
+    WHERE r.source_type = 'PRECURSE'
+      AND r.snapshot_date = latest.snapshot_date
+    GROUP BY r.numero_operacion
   ), evidence AS (
     SELECT numero_operacion,
       min(fecha_cotizacion) AS fecha_cotizacion,
@@ -53,14 +65,14 @@ const universeView = `
     e.fecha_precurse,
     e.fecha_curse,
     CASE WHEN e.has_curse_evidence THEN 'CURSE'
-      WHEN e.has_precurse_evidence THEN 'PRECURSE'
+      WHEN p.numero_operacion IS NOT NULL THEN 'PRECURSE'
       ELSE 'COTIZACION' END AS etapa_certificada,
     CASE WHEN e.has_curse_evidence THEN coalesce(e.curse_cantidad_vehiculo, 1)
       ELSE 0 END AS ufi_curse,
-    CASE WHEN NOT e.has_curse_evidence AND e.has_precurse_evidence
-      THEN coalesce(e.cantidad_vehiculo, 1) ELSE 0 END AS ufi_precurse_abierto,
+    CASE WHEN NOT e.has_curse_evidence AND p.numero_operacion IS NOT NULL
+      THEN coalesce(p.cantidad_vehiculo, 1) ELSE 0 END AS ufi_precurse_abierto,
     CASE WHEN e.has_curse_evidence THEN coalesce(e.curse_cantidad_vehiculo, 1)
-      WHEN e.has_precurse_evidence THEN coalesce(e.cantidad_vehiculo, 1)
+      WHEN p.numero_operacion IS NOT NULL THEN coalesce(p.cantidad_vehiculo, 1)
       ELSE 0 END AS ufi_operacional,
     l.distribuidor, l.sucursal, l.vendedor, l.ejecutivo,
     l.modelo_vehiculo, l.version_vehiculo, l.valor_vehiculo, l.promocion,
@@ -74,40 +86,42 @@ const universeView = `
     e.evidence_rows
   FROM ranked l
   JOIN evidence e USING (numero_operacion)
+  LEFT JOIN current_precurse p USING (numero_operacion)
   WHERE l.rn = 1
 `;
 
 try {
   const [target] = await azureQuery(`SELECT to_regclass('public.forum_funnel_universe_v01')::text AS relation`);
-  if (target.relation) {
-    console.log(JSON.stringify({ status: 'ALREADY_PRESENT', relation: target.relation }));
-  } else {
-    const columns = await azureQuery(`
-      SELECT column_name
-      FROM information_schema.columns
-      WHERE table_schema='public' AND table_name='forum_funnel_raw'
-    `);
-    const actual = new Set(columns.map(row => row.column_name));
-    const missing = requiredColumns.filter(column => !actual.has(column));
-    assert.equal(missing.length, 0,
-      `Cannot create Forum universe view; public.forum_funnel_raw is missing columns: ${missing.join(', ')}`);
-    assert.ok(columns.length, 'Cannot create Forum universe view; public.forum_funnel_raw is missing');
+  const columns = await azureQuery(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='forum_funnel_raw'
+  `);
+  const actual = new Set(columns.map(row => row.column_name));
+  const missing = requiredColumns.filter(column => !actual.has(column));
+  assert.equal(missing.length, 0,
+    `Cannot replace Forum universe view; public.forum_funnel_raw is missing columns: ${missing.join(', ')}`);
+  assert.ok(columns.length, 'Cannot replace Forum universe view; public.forum_funnel_raw is missing');
 
-    await azureQuery(`CREATE VIEW public.forum_funnel_universe_v01 AS ${universeView}`);
+  await azureQuery(`CREATE OR REPLACE VIEW public.forum_funnel_universe_v01 AS ${universeView}`);
     const [check] = await azureQuery(`
       SELECT count(*)::bigint AS rows,
         count(DISTINCT numero_operacion)::bigint AS operations,
+        count(*) FILTER (WHERE etapa_certificada='PRECURSE')::bigint AS precurse_operations,
+        count(*) FILTER (WHERE etapa_certificada='PRECURSE' AND upper(btrim(coalesce(distribuidor,'')))='CIDEF')::bigint AS cidef_precurse_operations,
+        (SELECT max(snapshot_date)::text FROM public.forum_funnel_raw WHERE source_type='PRECURSE') AS precurse_snapshot_date,
         coalesce(sum(ufi_curse),0)::bigint AS ufi_curse,
         coalesce(sum(ufi_precurse_abierto),0)::bigint AS ufi_precurse_open
       FROM public.forum_funnel_universe_v01
     `);
-    assert.equal(Number(check.rows), Number(check.operations), 'Forum universe must contain one row per operation');
-    console.log(JSON.stringify({
-      status: 'CREATED_FROM_EXISTING_RAW',
-      relation: 'public.forum_funnel_universe_v01',
-      ...Object.fromEntries(Object.entries(check).map(([key, value]) => [key, Number(value)])),
-    }));
-  }
+  assert.equal(Number(check.rows), Number(check.operations), 'Forum universe must contain one row per operation');
+  console.log(JSON.stringify({
+    status: target.relation ? 'REPLACED_FROM_EXISTING_RAW' : 'CREATED_FROM_EXISTING_RAW',
+    relation: 'public.forum_funnel_universe_v01',
+    ...Object.fromEntries(Object.entries(check).map(([key, value]) => [
+      key, value === null || key === 'precurse_snapshot_date' ? value : Number(value),
+    ])),
+  }));
 } finally {
   await closeAzurePool();
 }
