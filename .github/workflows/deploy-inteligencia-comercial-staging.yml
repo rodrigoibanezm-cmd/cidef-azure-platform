@@ -102,7 +102,8 @@ jobs:
         run: |
           set -euo pipefail
           az acr login --name "$ACR_NAME"
-          IMAGE="$ACR/cidef-inteligencia-comercial-staging:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          FRONT_SHA=$(git -C frontend rev-parse HEAD)
+          IMAGE="$ACR/cidef-inteligencia-comercial-staging:${FRONT_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker build --file frontend/Dockerfile --tag "$IMAGE" frontend
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
