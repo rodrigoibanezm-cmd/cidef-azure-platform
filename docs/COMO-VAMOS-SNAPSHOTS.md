@@ -7,6 +7,13 @@ Status: DISEÑO ACORDADO, no asumir implementado. Leer `AGENTS.md` primero.
 - Cada tabla guarda resultados certificados por dominio: Compañía, FOTON/DONGFENG, canales, tiendas, vendedores, dealers, modelos **solo cuando el motor certifique esas dimensiones**.
 - Fuente: cargas -> Azure PostgreSQL -> P1 hechos -> P2 transformaciones necesarias -> P3 evidencia -> snapshot -> API frontend. La API no calcula métricas consultando RAW directamente. El frontend solo lee payloads certificados.
 
+## Entornos: decisión vinculante
+- **Producción y staging de “Cómo vamos” usan exactamente las mismas tres tablas** `cv_sales_snapshots`, `cv_forum_snapshots`, `cv_rvm_snapshots` y el mismo PostgreSQL Azure.
+- Misma API de lectura, contratos P1/P2/P3, firmas, invalidación y bloqueo de regeneración para ambos entornos; regeneraciones idempotentes y coordinadas. Staging nunca reconstruye por separado ni sobrescribe con datos ficticios.
+- La separación de entornos es de **código/despliegue del front**, no de bases, snapshots ni motores. No agregar `environment` como partición funcional de snapshots.
+- **No montar ahora un staging nuevo para “Cómo vamos”**: solo cuando la versión esté suficientemente avanzada y el usuario lo autorice. Reutilizar el staging existente del frontend si aplica; no crear servicios, tablas, workflows ni infraestructura nueva por defecto.
+- Si se propone aislamiento adicional, detenerse, evaluar necesidad y opción mínima; pedir aprobación explícita antes de tocar arquitectura.
+
 ## Vigencia
 - Capturar `period`, `cutoff_date`, `scope` (cuando aplique), `source_signature`, `engine_signature`, `payload JSONB`, `p3_run_id`, `status`, `generated_at`. Son campos conceptuales; revisar convenciones existentes antes de crear esquema.
 - Firmas de datos por dominio registradas **tras cargas exitosas**; no escanear RAW completo al abrir la página. Firma de motores/contratos invalida también si cambió la semántica.
