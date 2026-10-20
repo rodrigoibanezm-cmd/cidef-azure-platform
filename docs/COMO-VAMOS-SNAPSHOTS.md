@@ -36,3 +36,12 @@ Status: DISEÑO ACORDADO, no asumir implementado. Leer `AGENTS.md` primero.
 
 ## Implementación
 - Antes de nuevas tablas/Actions/motores: localizar patrón existente reutilizable, proponer alternativa mínima. No crear megatabla, nueva infraestructura ni recalcular todo al abrir. Separar backend motores (Azure platform) y UI (front).
+
+## Avance SALES Compañía — 20-10-2026
+- Código creado en `motor-test-azure/sales-snapshot.js`: lectura por firma, bloqueo compartido para no duplicar generación y UPSERT transaccional. Reutiliza `buildComoVamosSales` de `motor-test-azure/como-vamos.js` (P1 y P3 existentes).
+- DDL definido en `scripts/sql/cv-sales-snapshots.sql`. **Archivo SQL no implica tabla instalada:** verificar PostgreSQL Azure antes de afirmar que existe.
+- **Pendiente obligatorio antes del primer uso real:** obtener `sourceSignature` desde metadatos verificables de la carga SALES exitosa. No aceptar una firma enviada por navegador, ni sustituirla por timestamps locales o un recuento completo de RAW.
+- `SALES_ENGINE_SIGNATURE` debe cambiar cuando se modifique la semántica del generador. La firma de datos controla las cargas; son independientes.
+- Aún no se conectó ninguna ruta HTTP ni se ejecutó una validación real en Azure. No afirmar snapshot certificado persistido hasta completar migración, alimentación de firma y doble lectura HIT.
+- El generador SALES actual recibe `period`, **no permite solicitar arbitrariamente un corte diario histórico**. No exponer generación histórica diaria hasta ampliar/reutilizar un contrato P1 con corte explícito; no falsificar fotos de un día anterior.
+- Primera entrega limitada a SALES Compañía. FORUM, RVM, rankings y otras dimensiones no se implementan en este avance.
