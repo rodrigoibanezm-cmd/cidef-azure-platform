@@ -20,9 +20,9 @@ permissions:
 jobs:
   refresh-staging:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
-      - name: Refresh staging snapshot and report runtime
+      - name: Start refresh and wait for durable status
         env:
           BASE_URL: https://cidef-intel-comercial-staging.calmforest-1c67ab46.chilecentral.azurecontainerapps.io
           WEEK_START: ${{ inputs.week_start }}
@@ -31,29 +31,54 @@ jobs:
         run: |
           set -euo pipefail
           started=$(date +%s)
-          response_file=$(mktemp)
-          http_code=$(curl --silent --show-error --max-time 5000 \
-            --output "$response_file" --write-out '%{http_code}' \
+          status_url="$BASE_URL/api/weekly-projections/results?week_start=$WEEK_START&cutoff_date=$CUTOFF_DATE&status=1"
+          request_file=$(mktemp)
+          set +e
+          request_code=$(curl --silent --show-error --max-time 220 \
+            --output "$request_file" --write-out '%{http_code}' \
             --header 'Content-Type: application/json' \
             --request POST \
             --data "{\"week_start\":\"$WEEK_START\",\"cutoff_date\":\"$CUTOFF_DATE\"}" \
             "$BASE_URL/api/weekly-projections/results")
-          finished=$(date +%s)
-          elapsed=$((finished - started))
-          if [[ "$http_code" != "200" ]]; then
-            echo "::error::Staging refresh returned HTTP $http_code"
-            jq -c '{status, error, completedStores, totalStores}' "$response_file" || true
-            exit 1
-          fi
-          jq -e '.ok == true and .status == "completed"' "$response_file" >/dev/null
-          {
-            echo "## Staging projection refresh"
-            echo "- Week start: $WEEK_START"
-            echo "- Cutoff: $CUTOFF_DATE"
-            echo "- Results: $(jq -r '.results' "$response_file")"
-            echo "- Stores: $(jq -r '.completedStores' "$response_file") / $(jq -r '.totalStores' "$response_file")"
-            echo "- Status: $(jq -r '.status' "$response_file")"
-            echo "- Started: $(jq -r '.started_at' "$response_file")"
-            echo "- Finished: $(jq -r '.finished_at' "$response_file")"
-            echo "- Action HTTP runtime: ${elapsed}s"
-          } >> "$GITHUB_STEP_SUMMARY"
+          request_exit=$?
+          set -e
+          echo "Refresh request ended with curl=$request_exit http=$request_code; polling PostgreSQL-backed status."
+
+          for attempt in $(seq 1 440); do
+            status_file=$(mktemp)
+            status_code=$(curl --silent --show-error --max-time 30 \
+              --output "$status_file" --write-out '%{http_code}' "$status_url" || true)
+            if [[ "$status_code" != "200" ]]; then
+              sleep 15
+              continue
+            fi
+            state=$(jq -r '.status // "unknown"' "$status_file")
+            if [[ "$state" == "completed" ]]; then
+              finished=$(date +%s)
+              elapsed=$((finished - started))
+              {
+                echo "## Staging projection refresh"
+                echo "- Week start: $WEEK_START"
+                echo "- Cutoff: $CUTOFF_DATE"
+                echo "- Results: $(jq -r '.results // "persisted snapshot"' "$request_file" 2>/dev/null || echo "persisted snapshot")"
+                echo "- Stores: $(jq -r '.completedStores' "$status_file") / $(jq -r '.totalStores' "$status_file")"
+                echo "- Status: $state"
+                echo "- Started: $(jq -r '.started_at' "$status_file")"
+                echo "- Finished: $(jq -r '.finished_at' "$status_file")"
+                echo "- Server runtime: $(jq -r '.duration_ms' "$status_file") ms"
+                echo "- Action elapsed including polling: ${elapsed}s"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if [[ "$state" == "failed" ]]; then
+              echo "::error::Staging refresh failed: $(jq -r '.error // "unknown error"' "$status_file")"
+              exit 1
+            fi
+            if [[ "$state" == "idle" ]]; then
+              echo "::error::No refresh job is recorded for this cut (POST HTTP $request_code, curl exit $request_exit)."
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "::error::Staging refresh did not finish within the 110 minute polling window."
+          exit 1
