@@ -31,6 +31,15 @@ test('P1 FORUM publishes explicit financing semantics',()=>{
   assert.ok(d.fields.includes('contract_number'));
 });
 
+test('FORUM universe certifies PRECURSE from the latest snapshot only',()=>{
+  const src=fs.readFileSync(new URL('../scripts/install-forum-universe-view.js',import.meta.url),'utf8');
+  assert.match(src,/latest_precurse_snapshot AS/);
+  assert.match(src,/r\\.snapshot_date = latest\\.snapshot_date/);
+  assert.match(src,/WHEN p\\.numero_operacion IS NOT NULL THEN 'PRECURSE'/);
+  assert.doesNotMatch(src,/WHEN e\\.has_precurse_evidence THEN 'PRECURSE'/);
+  assert.match(src,/CREATE OR REPLACE VIEW public\\.forum_funnel_universe_v01/);
+});
+
 test('PRECURSE contract declares supported store and seller identities',()=>{
   const d=describeForum();
   assert.ok(d.dimensions.includes('STORE'));
