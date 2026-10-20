@@ -1,0 +1,38 @@
+name: Diagnose Cenco Florida alias in Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-alias:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 5
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - name: Inspect canonical store and aliases (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${AZURE_DATABASE_URL:-}" || { echo "::error::Missing AZURE_DATABASE_URL"; exit 1; }
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          export PGOPTIONS="-c default_transaction_read_only=on -c statement_timeout=20000"
+          psql "$AZURE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -P pager=off <<'SQL'
+          BEGIN READ ONLY;
+          SELECT sucursal_id, nombre_canonico
+          FROM sucursales_master
+          WHERE sucursal_id = 44;
+          SELECT sucursal_alias_id, sucursal_id, fuente, valor_raw,
+                 valor_normalizado, match_method, validated
+          FROM sucursal_aliases
+          WHERE sucursal_id = 44
+             OR lower(valor_raw) LIKE '%florida%'
+             OR lower(valor_normalizado) LIKE '%florida%'
+          ORDER BY sucursal_alias_id;
+          ROLLBACK;
+          SQL
