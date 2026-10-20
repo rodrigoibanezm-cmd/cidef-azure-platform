@@ -58,7 +58,7 @@ jobs:
             echo "::error::Expected existing Container App $APP in $RG was not found; refusing to create infrastructure."
             exit 1
           fi
-          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --output none
+          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars PROJECTIONS_ENVIRONMENT=production --output none
           FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           test -n "$FQDN"
           echo "FRONT_URL=https://$FQDN" >> "$GITHUB_ENV"
@@ -77,18 +77,32 @@ jobs:
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/sucursales" --output /dev/null
           curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/modelos" --output /dev/null
           python3 - <<'PY'
+          from datetime import date, timedelta
+          import json
+          import os
+          import urllib.request
+          cutoff = date.today()
+          week_start = cutoff - timedelta(days=cutoff.weekday())
+          url = f"{os.environ['FRONT_URL']}/api/weekly-projections/results?week_start={week_start.isoformat()}&cutoff_date={cutoff.isoformat()}&status=1"
+          with urllib.request.urlopen(url, timeout=30) as response:
+              status = json.load(response)
+          if status.get('environment') != 'production':
+              raise SystemExit(f"Projection results environment is {status.get('environment')!r}, expected 'production'")
+          print('Projection refresh status is isolated to the production environment.')
+          PY
+          python3 - <<'PY'
           from pathlib import Path
           weekly = Path('/tmp/proyeccion-semanal.html').read_text()
           admin = Path('/tmp/proyeccion-admin.html').read_text()
           if len(weekly) < 1000:
               raise SystemExit('Weekly projection page response is unexpectedly small')
-          finance_ids = ['financeQuotes', 'financeApproved', 'financeUfi', 'financeOther']
+          finance_ids = ['financeQuotes', 'financeApproved', 'financeUfi', 'financeOther', 'financePrecurse']
           missing_finance_ids = [field for field in finance_ids if f'id="{field}"' not in admin]
           if missing_finance_ids:
               raise SystemExit('Restored finance cards are missing: ' + ', '.join(missing_finance_ids))
           cards = admin.count('<article class="projection-card finance-card">')
-          if cards != 4:
-              raise SystemExit(f'Expected the restored four finance cards, found {cards}')
+          if cards != 5:
+              raise SystemExit(f'Expected five finance cards including PRECURSE, found {cards}')
           required = {
               'week selector': 'id="week"',
               'store selector': 'id="store"',
