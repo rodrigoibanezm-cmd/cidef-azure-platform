@@ -1,5 +1,5 @@
 # Trigger staging rollout after staging app code updates.
-# Rebuild for the current P1 snapshot query.
+# Rebuild for P1 brand breakdowns, including approvals, on staging.
 name: Deploy Inteligencia Comercial staging to Azure
 
 on:
