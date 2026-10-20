@@ -192,6 +192,10 @@ jobs:
               "projection tables":"<table",
               "store breakdown":"id=\"byStore\"",
               "seller breakdown":"id=\"sellerBreakdown\"",
+              "P1 monthly brand breakdown":"id=\"monthBrandBreakdown\"",
+              "P1 quotations brand breakdown":"id=\"financeQuotesBrand\"",
+              "P1 UFI brand breakdown":"id=\"financeUfiBrand\"",
+              "P1 PRECURSE brand breakdown":"id=\"financePrecurseBrand\"",
           }
           missing=[name for name, marker in required.items() if marker not in admin]
           if missing:
