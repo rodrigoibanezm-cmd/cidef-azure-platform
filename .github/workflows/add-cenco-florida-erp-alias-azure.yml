@@ -1,0 +1,56 @@
+name: Add Cenco Florida ERP store alias (Azure)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  add-alias:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 5
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - name: Validate and register store alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${AZURE_DATABASE_URL:-}" || { echo "::error::Missing AZURE_DATABASE_URL"; exit 1; }
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          export PGOPTIONS="-c statement_timeout=20000"
+          psql "$AZURE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -P pager=off <<'SQL'
+          BEGIN;
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM sucursales_master
+              WHERE sucursal_id=44 AND nombre_canonico='CIDEF Mall Cenco Florida'
+            ) THEN
+              RAISE EXCEPTION 'Store 44 is not CIDEF Mall Cenco Florida';
+            END IF;
+            IF EXISTS (
+              SELECT 1 FROM sucursal_aliases
+              WHERE fuente='ventas_raw'
+                AND valor_normalizado='SUCURSAL CENCO FLORIDA'
+                AND sucursal_id<>44
+            ) THEN
+              RAISE EXCEPTION 'Conflicting ERP store alias';
+            END IF;
+          END $$;
+          INSERT INTO sucursal_aliases (
+            sucursal_id, fuente, valor_raw, valor_normalizado, match_method, validated
+          ) VALUES (
+            44, 'ventas_raw', 'Sucursal Cenco Florida', 'SUCURSAL CENCO FLORIDA',
+            'erp_validated_store_alias', true
+          )
+          ON CONFLICT (fuente, valor_normalizado) DO UPDATE SET
+            valor_raw=EXCLUDED.valor_raw,
+            validated=true,
+            match_method=EXCLUDED.match_method
+          RETURNING sucursal_alias_id, sucursal_id, fuente, valor_raw, validated;
+          COMMIT;
+          SQL
