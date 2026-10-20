@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { azureQuery, closeAzurePool } from '../lib/azure-postgres.js';
+import { closeAzurePool } from '../lib/azure-postgres.js';
 import { describeForum, fetchForum, observeForumEvidence } from '../lib/data-floor/forumCertifier.js';
+import { observePrecurseSnapshotBundle } from '../lib/data-floor/forum/observations.js';
 
 const markdown = [];
 const add = (line = '') => markdown.push(line);
@@ -18,7 +19,10 @@ try {
   assert.ok(contract.dimensions.includes('STORE'));
   assert.ok(contract.dimensions.includes('SELLER'));
 
-  const company = await observeForumEvidence({ measure: 'PRECURSE' });
+  const bundle = await observePrecurseSnapshotBundle();
+  assert.ok(bundle.execution.elapsed_ms < 30000,
+    'PRECURSE bundle must complete below the P1 30-second statement timeout');
+  const company = bundle.company;
   assert.equal(company.authority, 'P1_CERTIFIED');
   assert.equal(company.status, 'COMPLETE');
   assert.equal(company.evidence_version, contract.version);
@@ -26,14 +30,9 @@ try {
   const snapshotDate = company.temporal.snapshot_date;
   assert.match(snapshotDate, /^\d{4}-\d{2}-\d{2}$/);
 
-  const dimensional = {};
+  const dimensional = bundle.dimensions;
   for (const dimension of ['STORE', 'SELLER']) {
-    const evidence = await observeForumEvidence({
-      measure: 'PRECURSE',
-      evidence_shape: 'DIMENSIONAL_QUANTITATIVE_DATASET',
-      dimension,
-      cutoff: snapshotDate,
-    });
+    const evidence = dimensional[dimension];
     assert.equal(evidence.authority, 'P1_CERTIFIED');
     assert.equal(evidence.status, 'COMPLETE');
     assert.equal(evidence.evidence_version, contract.version);
@@ -41,52 +40,17 @@ try {
     assert.equal(evidence.payload.rule, contract.measures.PRECURSE.rule);
     assert.equal(sum(evidence.payload.members), company.payload.value,
       'PRECURSE ' + dimension + ' does not reconcile to company');
-    dimensional[dimension] = evidence;
   }
 
-  // Resolve each canonical store's validated raw aliases, then ask the same P1
-  // SELLER observation to group within that store. The SQL reads identity metadata
-  // only; it does not calculate PRECURSE values.
-  const storeAliases = await azureQuery(`
-    SELECT sa.sucursal_id::text AS store_id,
-      array_agg(DISTINCT sa.valor_raw ORDER BY sa.valor_raw) AS raw_aliases
-    FROM sucursal_aliases sa
-    WHERE sa.fuente = 'forum_raw'
-      AND sa.validated = true
-      AND nullif(btrim(sa.valor_raw), '') IS NOT NULL
-      AND sa.sucursal_alias_id = (
-        SELECT min(sa2.sucursal_alias_id)
-        FROM sucursal_aliases sa2
-        WHERE sa2.fuente = 'forum_raw'
-          AND sa2.validated = true
-          AND master_norm(sa2.valor_raw) = master_norm(sa.valor_raw)
-      )
-    GROUP BY sa.sucursal_id
-  `);
-  const aliasesByStore = new Map(storeAliases.map(row => [String(row.store_id), row.raw_aliases]));
-  const sellersByStore = new Map();
+  // Canonical STORE and SELLER identities and their cross-tab are resolved in the
+  // same P1 SQL statement as the company and dimension totals.
+  const sellersByStore = new Map(Object.entries(bundle.sellers_by_store));
   for (const store of dimensional.STORE.payload.members) {
     if (store.member_id === 'UNRESOLVED' || store.member_id.startsWith('UNRESOLVED:')) continue;
-    const aliases = aliasesByStore.get(String(store.member_id)) || [];
-    assert.ok(aliases.length, 'No validated Forum aliases for canonical store ' + store.member_id);
-    const evidence = await observeForumEvidence({
-      measure: 'PRECURSE',
-      evidence_shape: 'DIMENSIONAL_QUANTITATIVE_DATASET',
-      dimension: 'SELLER',
-      cutoff: snapshotDate,
-      filters: { store: aliases },
-    });
-    assert.equal(evidence.authority, 'P1_CERTIFIED');
-    assert.equal(evidence.status, 'COMPLETE');
-    assert.equal(evidence.evidence_version, contract.version);
-    assert.equal(evidence.temporal.snapshot_date, snapshotDate);
-    assert.equal(sum(evidence.payload.members), store.value,
+    const sellers = sellersByStore.get(String(store.member_id));
+    assert.ok(sellers, 'No batched seller groups for canonical store ' + store.member_id);
+    assert.equal(sum(sellers.members), store.value,
       'PRECURSE sellers do not reconcile for canonical store ' + store.member_id);
-    sellersByStore.set(String(store.member_id), {
-      store_label: store.member_label,
-      value: store.value,
-      members: evidence.payload.members,
-    });
   }
 
   // OPERATION_STATES certifies the COTIZACION state of the exact daily snapshot.
@@ -143,6 +107,7 @@ try {
   add();
   add('- **Snapshot certificado:** ' + snapshotDate);
   add('- **PRECURSE compañía:** ' + company.payload.value + ' operaciones');
+  add('- **Consulta agrupada:** 1 SQL para compañía, tienda, vendedor y vendedor por tienda; ' + bundle.execution.elapsed_ms + ' ms.');
   add('- **Identidades sin resolver:** ' + unresolvedOperations.length + ' operaciones (' +
     unresolvedLabels.STORE.size + ' etiquetas de tienda y ' +
     unresolvedLabels.SELLER.size + ' de vendedor sin resolver)');

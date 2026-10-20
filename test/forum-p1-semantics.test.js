@@ -73,3 +73,13 @@ test('P1 FORUM SELLER dimension uses canonical person identity',()=>{
   assert.match(src,/fromForSellerIdentity/);
   assert.match(src,/UNRESOLVED:/);
 });
+
+
+test('PRECURSE company, store, seller, and store-seller groups share one materialized P1 universe',()=>{
+  const src=fs.readFileSync(new URL('../lib/data-floor/forum/observations.js',import.meta.url),'utf8');
+  assert.match(src,/WITH universe AS MATERIALIZED/);
+  assert.match(src,/GROUP BY GROUPING SETS/);
+  assert.match(src,/STORE_IDENTITY_JOIN/);
+  assert.match(src,/SELLER_IDENTITY_JOIN/);
+  assert.match(src,/canBundle=Object\.keys\(requestedFilters\)\.length===0/);
+});
