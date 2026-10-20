@@ -1,0 +1,31 @@
+name: Update FORUM P1 universe view on Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-universe-view:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-package-lock
+      - name: Replace FORUM universe view
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::AZURE_DATABASE_URL is not configured in Production"
+            exit 1
+          fi
+          node scripts/install-forum-universe-view.js
