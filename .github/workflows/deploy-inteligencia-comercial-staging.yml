@@ -1,4 +1,4 @@
-# Trigger staging rollout after staging app code updates.
+# Deploy staging from the platform repository with its own Azure OIDC secrets.
 # Rebuild staging with UFI and other-credit split reconciled to P1.
 name: Deploy Inteligencia Comercial staging to Azure
 
