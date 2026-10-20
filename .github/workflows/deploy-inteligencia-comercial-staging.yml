@@ -1,5 +1,5 @@
 # Trigger staging rollout after staging app code updates.
-# Rebuild staging after sequencing P1 brand snapshot calls.
+# Rebuild staging with UFI and other-credit split reconciled to P1.
 name: Deploy Inteligencia Comercial staging to Azure
 
 on:
