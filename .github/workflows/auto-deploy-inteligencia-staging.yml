@@ -1,8 +1,8 @@
 name: Auto deploy Inteligencia Comercial staging
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
+  repository_dispatch:
+    types: [cidef-inteligencia-staging-push]
   workflow_dispatch:
 
 permissions:
@@ -14,40 +14,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    environment: Production
-    outputs:
-      changed: ${{ steps.compare.outputs.changed }}
-    steps:
-      - name: Check current frontend staging revision
-        id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          FRONT_SHA=$(git ls-remote https://github.com/rodrigoibanezm-cmd/cidef-inteligencia-comercial.git refs/heads/staging | cut -f1)
-          test -n "$FRONT_SHA"
-          echo "Frontend commit: $FRONT_SHA" >> "$GITHUB_STEP_SUMMARY"
-          echo "FRONT_SHA=$FRONT_SHA" >> "$GITHUB_ENV"
-      - uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Compare deployed staging revision
-        id: compare
-        shell: bash
-        run: |
-          set -euo pipefail
-          IMAGE=$(az containerapp show -g rg-cidef-prod -n cidef-intel-comercial-staging --query 'properties.template.containers[0].image' -o tsv 2>/dev/null || true)
-          case "$IMAGE" in
-            *"/cidef-inteligencia-comercial-staging:${FRONT_SHA}-"*) echo "changed=false" >> "$GITHUB_OUTPUT" ;;
-            *) echo "changed=true" >> "$GITHUB_OUTPUT" ;;
-          esac
   deploy:
-    needs: check
-    if: needs.check.outputs.changed == 'true'
     uses: rodrigoibanezm-cmd/cidef-azure-platform/.github/workflows/deploy-inteligencia-comercial-staging.yml@main
     secrets: inherit
