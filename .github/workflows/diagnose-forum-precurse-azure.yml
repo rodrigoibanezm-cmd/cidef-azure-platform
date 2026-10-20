@@ -1,0 +1,33 @@
+name: Diagnose FORUM PRECURSE P1 on Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-precurse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-package-lock
+      - name: Validate FORUM P1 contract
+        run: node --test test/forum-p1-semantics.test.js
+      - name: Diagnose certified PRECURSE using Azure P1
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${AZURE_DATABASE_URL:-}" ]]; then
+            echo "::error::AZURE_DATABASE_URL is not configured in Production"
+            exit 1
+          fi
+          node scripts/diagnose-forum-precurse-azure.js
