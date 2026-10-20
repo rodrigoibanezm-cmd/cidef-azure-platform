@@ -1,0 +1,59 @@
+name: Refresh Inteligencia Comercial results (staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      week_start:
+        description: Monday starting the reporting week
+        required: true
+        default: '2026-10-12'
+        type: string
+      cutoff_date:
+        description: Data cutoff date
+        required: true
+        default: '2026-10-18'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  refresh-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Refresh staging snapshot and report runtime
+        env:
+          BASE_URL: https://cidef-intel-comercial-staging.calmforest-1c67ab46.chilecentral.azurecontainerapps.io
+          WEEK_START: ${{ inputs.week_start }}
+          CUTOFF_DATE: ${{ inputs.cutoff_date }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          started=$(date +%s)
+          response_file=$(mktemp)
+          http_code=$(curl --silent --show-error --max-time 5000 \
+            --output "$response_file" --write-out '%{http_code}' \
+            --header 'Content-Type: application/json' \
+            --request POST \
+            --data "{\"week_start\":\"$WEEK_START\",\"cutoff_date\":\"$CUTOFF_DATE\"}" \
+            "$BASE_URL/api/weekly-projections/results")
+          finished=$(date +%s)
+          elapsed=$((finished - started))
+          if [[ "$http_code" != "200" ]]; then
+            echo "::error::Staging refresh returned HTTP $http_code"
+            jq -c '{status, error, completedStores, totalStores}' "$response_file" || true
+            exit 1
+          fi
+          jq -e '.ok == true and .status == "completed"' "$response_file" >/dev/null
+          {
+            echo "## Staging projection refresh"
+            echo "- Week start: $WEEK_START"
+            echo "- Cutoff: $CUTOFF_DATE"
+            echo "- Results: $(jq -r '.results' "$response_file")"
+            echo "- Stores: $(jq -r '.completedStores' "$response_file") / $(jq -r '.totalStores' "$response_file")"
+            echo "- Status: $(jq -r '.status' "$response_file")"
+            echo "- Started: $(jq -r '.started_at' "$response_file")"
+            echo "- Finished: $(jq -r '.finished_at' "$response_file")"
+            echo "- Action HTTP runtime: ${elapsed}s"
+          } >> "$GITHUB_STEP_SUMMARY"
