@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { closeAzurePool } from '../lib/azure-postgres.js';
+import { azureQuery, closeAzurePool } from '../lib/azure-postgres.js';
 import { describeForum, fetchForum, observeForumEvidence } from '../lib/data-floor/forumCertifier.js';
 
 const markdown = [];
@@ -42,6 +42,49 @@ try {
     assert.equal(sum(evidence.payload.members), company.payload.value,
       'PRECURSE ' + dimension + ' does not reconcile to company');
     dimensional[dimension] = evidence;
+  }
+
+  // Resolve each canonical store's validated raw aliases, then ask the same P1
+  // SELLER observation to group within that store. The SQL reads identity metadata
+  // only; it does not calculate PRECURSE values.
+  const storeAliases = await azureQuery(`
+    SELECT sa.sucursal_id::text AS store_id,
+      array_agg(DISTINCT sa.valor_raw ORDER BY sa.valor_raw) AS raw_aliases
+    FROM sucursal_aliases sa
+    WHERE sa.fuente = 'forum_raw'
+      AND sa.validated = true
+      AND nullif(btrim(sa.valor_raw), '') IS NOT NULL
+      AND sa.sucursal_alias_id = (
+        SELECT min(sa2.sucursal_alias_id)
+        FROM sucursal_aliases sa2
+        WHERE sa2.fuente = 'forum_raw'
+          AND sa2.validated = true
+          AND master_norm(sa2.valor_raw) = master_norm(sa.valor_raw)
+      )
+    GROUP BY sa.sucursal_id
+  `);
+  const aliasesByStore = new Map(storeAliases.map(row => [String(row.store_id), row.raw_aliases]));
+  const sellersByStore = new Map();
+  for (const store of dimensional.STORE.payload.members) {
+    if (store.member_id === 'UNRESOLVED' || store.member_id.startsWith('UNRESOLVED:')) continue;
+    const aliases = aliasesByStore.get(String(store.member_id)) || [];
+    assert.ok(aliases.length, 'No validated Forum aliases for canonical store ' + store.member_id);
+    const evidence = await observeForumEvidence({
+      measure: 'PRECURSE',
+      evidence_shape: 'DIMENSIONAL_QUANTITATIVE_DATASET',
+      dimension: 'SELLER',
+      cutoff: snapshotDate,
+      filters: { store: aliases },
+    });
+    assert.equal(evidence.authority, 'P1_CERTIFIED');
+    assert.equal(evidence.temporal.snapshot_date, snapshotDate);
+    assert.equal(sum(evidence.payload.members), store.value,
+      'PRECURSE sellers do not reconcile for canonical store ' + store.member_id);
+    sellersByStore.set(String(store.member_id), {
+      store_label: store.member_label,
+      value: store.value,
+      members: evidence.payload.members,
+    });
   }
 
   // OPERATION_STATES certifies the COTIZACION state of the exact daily snapshot.
@@ -139,6 +182,23 @@ try {
     add('|' + md(row.member_id) + '|' + md(row.member_label) + '|' + row.value + '|');
   }
   add();
+  add('## Vendedores por tienda');
+  add();
+  add('| Tienda | Vendedor ID | Vendedor | Operaciones PRECURSE |');
+  add('|---|---|---|---:|');
+  for (const [storeId, store] of sellersByStore) {
+    for (const seller of store.members) {
+      add('|' + md(storeId) + ' — ' + md(store.store_label) + '|' +
+        md(seller.member_id) + '|' + md(seller.member_label) + '|' + seller.value + '|');
+    }
+  }
+  const unresolvedStoreTotal = dimensional.STORE.payload.members
+    .filter(member => member.member_id === 'UNRESOLVED' || member.member_id.startsWith('UNRESOLVED:'))
+    .reduce((total, member) => total + member.value, 0);
+  add();
+  add('PRECURSE en tiendas sin identidad canónica: ' + unresolvedStoreTotal +
+    ' operaciones; no se asignaron a vendedores por tienda.');
+
   add('## Operaciones con tienda o vendedor sin identidad resuelta');
   add();
   if (unresolvedOperations.length) {
@@ -154,7 +214,7 @@ try {
   add();
   add('## Integración mínima propuesta para Proyecciones Admin');
   add();
-  add('En el proceso existente de Actualizar, consumir una vez las evidencias P1 PRECURSE de compañía, STORE y SELLER usando el mismo snapshot_date; validar autoridad, versión, corte común y que cada desglose reconcilie al total. Incorporar los valores en el payload JSONB de las filas ya existentes de weekly_projection_results para Empresa, tienda y vendedor y guardarlos en el reemplazo transaccional actual. La navegación debe leer el snapshot guardado; no volver a llamar P1 ni recalcular. No crear otra tabla ni escribir desde este Action.');
+  add('En el Actualizar existente, consumir una vez las evidencias P1 PRECURSE para compañía y tienda. Para los vendedores, ejecutar la dimensión SELLER filtrada por los alias de tienda ya validados y guardar cada resultado con su sucursal_id/persona_id canónicos; el contrato ofrece una dimensión por consulta y no un cruce STORE×SELLER. Validar autoridad, versión, snapshot común y reconciliación antes de guardar. Incorporar los valores en los payloads JSONB COMPANY, STORE y SELLER de weekly_projection_results dentro del reemplazo transaccional actual. La navegación lee lo guardado; no vuelve a llamar P1 ni recalcular. No crear otra tabla.');
   add();
   add('---');
   add('Este reporte proviene de consultas de lectura a PostgreSQL Azure mediante los motores FORUM P1 existentes. No se escribió en tablas.');
