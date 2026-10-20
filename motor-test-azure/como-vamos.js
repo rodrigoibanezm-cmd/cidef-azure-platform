@@ -147,6 +147,18 @@ async function rvmShareIndicator(runId, period, periods) {
   return ready('rvm_share', 'percent', period, { company: current.company.percentage, foton: current.foton.percentage, dongfeng: current.dongfeng.percentage }, series.map(({ p2_evidence, ...row }) => row), [...current.company.evidence, ...current.foton.evidence, ...current.dongfeng.evidence], current.row.cutoff, 'RVM P1 + p2.part_to_universe_ratio v0.1.0', ['DONGFENG_RVM_SOURCE_LABEL_DFM'], { authority: 'P2_EXECUTED', unit_id: 'p2.part_to_universe_ratio', contract_version: '0.1.0', output: current.company.p2.result });
 }
 
+// SALES-only entry point: reuse the existing certified computation without running FORUM/RVM.
+export async function buildComoVamosSales(period) {
+  monthParts(period);
+  const run_id = 'como-vamos-sales-' + randomUUID();
+  const periods = [shiftMonth(period, -3), shiftMonth(period, -2), shiftMonth(period, -1), period];
+  const indicator = await salesIndicator(run_id, period, periods);
+  if (!indicator.certified || !indicator.evidence_id || !indicator.cutoff) {
+    throw new Error('SALES_SNAPSHOT_NOT_CERTIFIED');
+  }
+  return { period, run_id, generated_at: new Date().toISOString(), indicators: [indicator] };
+}
+
 export async function buildComoVamos(period) {
   monthParts(period);
   const run_id = 'como-vamos-' + randomUUID();
