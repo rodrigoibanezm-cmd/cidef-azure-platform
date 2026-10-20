@@ -1,3 +1,4 @@
+# Trigger staging rollout after staging app code updates.
 name: Deploy Inteligencia Comercial staging to Azure
 
 on:
