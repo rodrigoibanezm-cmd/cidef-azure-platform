@@ -3,6 +3,7 @@
 name: Deploy Inteligencia Comercial staging to Azure
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main]
