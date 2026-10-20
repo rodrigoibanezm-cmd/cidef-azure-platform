@@ -94,7 +94,7 @@ try {
       "  AND nullif(btrim(sa.valor_raw),'') IS NOT NULL",
       "ORDER BY sa.sucursal_alias_id",
       "LIMIT 1",
-    ].join('\\n'))).rows;
+    ].join('\n'))).rows;
     output.sample_store_filter = sampleAlias || null;
 
     const totalSql = "SELECT count(*) FILTER (WHERE etapa_certificada='PRECURSE')::bigint value FROM " + FORUM_FROM;
@@ -124,7 +124,7 @@ try {
       "    'producto_aliases_v01','marcas_master_v01'",
       "  )",
       "ORDER BY n.nspname,c.relname",
-    ].join('\\n'));
+    ].join('\n'));
     output.relations = relations.rows;
 
     const stats = await client.query([
@@ -137,7 +137,7 @@ try {
       "    'persona_aliases','personas_master','producto_aliases_v01','marcas_master_v01'",
       "  )",
       "ORDER BY schemaname,relname",
-    ].join('\\n'));
+    ].join('\n'));
     output.table_stats = stats.rows;
 
     const indexes = await client.query([
@@ -149,7 +149,7 @@ try {
       "    'persona_aliases','personas_master','producto_aliases_v01','marcas_master_v01'",
       "  )",
       "ORDER BY schemaname,tablename,indexname",
-    ].join('\\n'));
+    ].join('\n'));
     output.indexes = indexes.rows;
     await client.query('ROLLBACK');
   } finally {
@@ -198,12 +198,12 @@ try {
     JSON.stringify(output.indexes, null, 2),
     '',
     'PRECURSE_STORE corresponde a la consulta P1 que falló. Comparar con PRECURSE_SELLER_COMPANY y PRECURSE_SELLER_FILTERED_TO_ONE_STORE para ubicar el costo del universo/joins frente al agrupamiento.',
-  ].join('\\n');
+  ].join('\n');
 
   console.log(JSON.stringify(output));
   if (process.env.GITHUB_STEP_SUMMARY) {
     const fs = await import('node:fs/promises');
-    await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, report + '\\n', 'utf8');
+    await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, report + '\n', 'utf8');
   }
 } finally {
   await closeAzurePool();
