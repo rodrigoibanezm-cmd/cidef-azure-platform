@@ -196,7 +196,7 @@ jobs:
               "P1 quotations brand breakdown":"id=\"financeQuotesBrand\"",
               "P1 UFI brand breakdown":"id=\"financeUfiBrand\"",
               "P1 PRECURSE brand breakdown":"id=\"financePrecurseBrand\"",
-              "small brand breakdown style":".brand-breakdown{"
+              "small brand breakdown style":".brand-breakdown{",
               "brand data read hook":"brand_indicators",
           }
           missing=[name for name, marker in required.items() if marker not in admin]
