@@ -22,6 +22,14 @@ try {
   const bundle = await observePrecurseSnapshotBundle();
   assert.ok(bundle.execution.elapsed_ms < 30000,
     'PRECURSE bundle must complete below the P1 30-second statement timeout');
+  const ownStores = await observePrecurseSnapshotBundle({ filters: { network: ['OWN_STORES'] } });
+  assert.ok(ownStores.execution.elapsed_ms < 30000,
+    'Filtered PRECURSE bundle must complete below the P1 30-second statement timeout');
+  assert.equal(ownStores.company.universe.network[0], 'OWN_STORES');
+  for (const dimension of ['STORE', 'SELLER']) {
+    assert.equal(sum(ownStores.dimensions[dimension].payload.members), ownStores.company.payload.value,
+      'Filtered PRECURSE ' + dimension + ' does not reconcile to company');
+  }
   const company = bundle.company;
   assert.equal(company.authority, 'P1_CERTIFIED');
   assert.equal(company.status, 'COMPLETE');
@@ -108,6 +116,7 @@ try {
   add('- **Snapshot certificado:** ' + snapshotDate);
   add('- **PRECURSE compañía:** ' + company.payload.value + ' operaciones');
   add('- **Consulta agrupada:** 1 SQL para compañía, tienda, vendedor y vendedor por tienda; ' + bundle.execution.elapsed_ms + ' ms.');
+  add('- **Filtro OWN_STORES:** compañía ' + ownStores.company.payload.value + ' PRECURSE; consulta agrupada ' + ownStores.execution.elapsed_ms + ' ms; STORE y SELLER reconciliados.');
   add('- **Identidades sin resolver:** ' + unresolvedOperations.length + ' operaciones (' +
     unresolvedLabels.STORE.size + ' etiquetas de tienda y ' +
     unresolvedLabels.SELLER.size + ' de vendedor sin resolver)');

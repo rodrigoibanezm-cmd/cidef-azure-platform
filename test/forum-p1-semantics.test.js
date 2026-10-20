@@ -81,5 +81,7 @@ test('PRECURSE company, store, seller, and store-seller groups share one materia
   assert.match(src,/GROUP BY GROUPING SETS/);
   assert.match(src,/STORE_IDENTITY_JOIN/);
   assert.match(src,/SELLER_IDENTITY_JOIN/);
-  assert.match(src,/canBundle=Object\.keys\(requestedFilters\)\.length===0/);
+  assert.match(src,/bundleFilterKeys=new Set/);
+  assert.match(src,/filterSql/);
+  assert.match(src,/universe:f/);
 });
