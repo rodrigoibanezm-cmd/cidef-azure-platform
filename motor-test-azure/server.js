@@ -2,11 +2,13 @@ import http from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { closeAzurePool, getAzurePool } from '../lib/azure-postgres.js';
 import { createMcpServer } from '../lib/mcp/server.js';
+import { observePrecurseSnapshotBundle } from '../lib/data-floor/forum/observations.js';
 import { buildComoVamos } from './como-vamos.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const MCP_PATH = '/api/mcp';
 const COMO_VAMOS_PATH = '/api/como-vamos';
+const PRECURSE_SNAPSHOT_PATH = '/api/precurse-snapshot';
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
 const BIND_ADDRESS = '0.0.0.0';
 
@@ -40,6 +42,15 @@ const httpServer = http.createServer(async (req, res) => {
       return sendJson(res, 200, { status: 'ready', database: 'connected' });
     } catch {
       return sendJson(res, 503, { status: 'not_ready' });
+    }
+  }
+  if (pathname === PRECURSE_SNAPSHOT_PATH) {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'METHOD_NOT_ALLOWED' }, { allow: 'GET' });
+    try {
+      const bundle = await observePrecurseSnapshotBundle({ filters: { network: ['OWN_STORES'] } });
+      return sendJson(res, 200, { ok: true, ...bundle }, { 'cache-control': 'no-store, max-age=0' });
+    } catch (error) {
+      return sendJson(res, 500, { ok: false, error: error?.message || 'PRECURSE_SNAPSHOT_FAILED' }, { 'cache-control': 'no-store, max-age=0' });
     }
   }
   if (pathname === COMO_VAMOS_PATH) {
