@@ -77,6 +77,8 @@ try {
       filters: { store: aliases },
     });
     assert.equal(evidence.authority, 'P1_CERTIFIED');
+    assert.equal(evidence.status, 'COMPLETE');
+    assert.equal(evidence.evidence_version, contract.version);
     assert.equal(evidence.temporal.snapshot_date, snapshotDate);
     assert.equal(sum(evidence.payload.members), store.value,
       'PRECURSE sellers do not reconcile for canonical store ' + store.member_id);
@@ -214,7 +216,7 @@ try {
   add();
   add('## Integración mínima propuesta para Proyecciones Admin');
   add();
-  add('En el Actualizar existente, consumir una vez las evidencias P1 PRECURSE para compañía y tienda. Para los vendedores, ejecutar la dimensión SELLER filtrada por los alias de tienda ya validados y guardar cada resultado con su sucursal_id/persona_id canónicos; el contrato ofrece una dimensión por consulta y no un cruce STORE×SELLER. Validar autoridad, versión, snapshot común y reconciliación antes de guardar. Incorporar los valores en los payloads JSONB COMPANY, STORE y SELLER de weekly_projection_results dentro del reemplazo transaccional actual. La navegación lee lo guardado; no vuelve a llamar P1 ni recalcular. No crear otra tabla.');
+  add('La tabla existente weekly_projection_results ya separa filas COMPANY, STORE y SELLER por corte, entorno y scope_key, con payload JSONB. En el Actualizar existente, consumir una vez P1 PRECURSE para compañía y tiendas; para vendedores, ejecutar SELLER filtrado por alias de tienda validados y guardar por sucursal_id/persona_id canónicos (el contrato admite una dimensión por consulta, no un cruce STORE×SELLER). Agregar el valor al payload de cada fila y persistirlo junto con los resultados actuales en el reemplazo transaccional ya existente, validando autoridad, versión, snapshot común y reconciliación antes del commit. La navegación lee lo guardado y no vuelve a llamar P1. No crear otra tabla ni recalcular el indicador.');
   add();
   add('---');
   add('Este reporte proviene de consultas de lectura a PostgreSQL Azure mediante los motores FORUM P1 existentes. No se escribió en tablas.');
