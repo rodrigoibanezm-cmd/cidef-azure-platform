@@ -36,6 +36,12 @@ jobs:
         run: |
           echo "Frontend source commit: $(git -C frontend rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify projection refresh SQL parameter
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'SET payload = CASE WHEN $6::boolean THEN' frontend/app/api/weekly-projections/results/route.js
+
       - name: Build and push frontend image
         shell: bash
         run: |
