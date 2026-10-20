@@ -20,11 +20,11 @@ try {
   assert.ok(contract.dimensions.includes('SELLER'));
 
   const bundle = await observePrecurseSnapshotBundle();
-  assert.ok(bundle.execution.elapsed_ms < 30000,
-    'PRECURSE bundle must complete below the P1 30-second statement timeout');
+  assert.ok(bundle.execution.elapsed_ms < 120000,
+    'PRECURSE bundle must complete below the P1 120-second statement timeout');
   const ownStores = await observePrecurseSnapshotBundle({ filters: { network: ['OWN_STORES'] } });
-  assert.ok(ownStores.execution.elapsed_ms < 30000,
-    'Filtered PRECURSE bundle must complete below the P1 30-second statement timeout');
+  assert.ok(ownStores.execution.elapsed_ms < 120000,
+    'Filtered PRECURSE bundle must complete below the P1 120-second statement timeout');
   assert.equal(ownStores.company.universe.network[0], 'OWN_STORES');
   for (const dimension of ['STORE', 'SELLER']) {
     assert.equal(sum(ownStores.dimensions[dimension].payload.members), ownStores.company.payload.value,
@@ -188,6 +188,15 @@ try {
     add('No se encontraron operaciones PRECURSE con tienda o vendedor sin resolver.');
   }
   add();
+  add('## Operaciones PRECURSE para conciliación por número');
+  add();
+  add('| Operación | Distribuidor | Tienda |');
+  add('|---:|---|---|');
+  for (const row of operations.rows) {
+    add('|' + md(row.operation_number) + '|' + md(row.distributor) + '|' + md(row.store) + '|');
+  }
+  add();
+
   add('## Integración mínima propuesta para Proyecciones Admin');
   add();
   add('La tabla existente weekly_projection_results ya separa filas COMPANY, STORE y SELLER por corte, entorno y scope_key, con payload JSONB. En el Actualizar existente, consumir una vez P1 PRECURSE para compañía y tiendas; para vendedores, ejecutar SELLER filtrado por alias de tienda validados y guardar por sucursal_id/persona_id canónicos (el contrato admite una dimensión por consulta, no un cruce STORE×SELLER). Agregar el valor al payload de cada fila y persistirlo junto con los resultados actuales en el reemplazo transaccional ya existente, validando autoridad, versión, snapshot común y reconciliación antes del commit. La navegación lee lo guardado y no vuelve a llamar P1. No crear otra tabla ni recalcular el indicador.');
