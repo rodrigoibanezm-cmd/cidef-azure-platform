@@ -46,15 +46,21 @@ try {
 
   // OPERATION_STATES certifies the COTIZACION state of the exact daily snapshot.
   // It documents snapshot coverage; it is not used to recalculate PRECURSE.
-  const operationStates = await observeForumEvidence({
-    measure: 'OPERATION_STATES',
-    evidence_shape: 'OPERATION_STATE_SNAPSHOT',
-    cutoff: snapshotDate,
-  });
-  assert.equal(operationStates.authority, 'P1_CERTIFIED');
-  assert.equal(operationStates.status, 'COMPLETE');
-  assert.equal(operationStates.temporal.snapshot_date, snapshotDate);
-  assert.equal(operationStates.payload.rule, contract.measures.OPERATION_STATES.rule);
+  let operationStates = null;
+  let operationStatesError = null;
+  try {
+    operationStates = await observeForumEvidence({
+      measure: 'OPERATION_STATES',
+      evidence_shape: 'OPERATION_STATE_SNAPSHOT',
+      cutoff: snapshotDate,
+    });
+    assert.equal(operationStates.authority, 'P1_CERTIFIED');
+    assert.equal(operationStates.status, 'COMPLETE');
+    assert.equal(operationStates.temporal.snapshot_date, snapshotDate);
+    assert.equal(operationStates.payload.rule, contract.measures.OPERATION_STATES.rule);
+  } catch (error) {
+    operationStatesError = error.message;
+  }
 
   // P1 FETCH supplies operation-level raw identity labels solely to enumerate
   // unresolved identities. The totals above remain the P1 OBSERVE outputs.
@@ -103,8 +109,13 @@ try {
   add('- OPERATION_STATES: ' + contract.measures.OPERATION_STATES.meaning + ' Regla: ' + contract.measures.OPERATION_STATES.rule + '.');
   add('- Evidencias PRECURSE: compañía ' + company.evidence_id + '; tienda ' +
     dimensional.STORE.evidence_id + '; vendedor ' + dimensional.SELLER.evidence_id + '.');
-  add('- Evidencia de estados diarios: ' + operationStates.evidence_id + '; ' +
-    operationStates.coverage.operation_count + ' operaciones únicas en snapshot COTIZACION exacto.');
+  if (operationStates) {
+    add('- Evidencia OPERATION_STATES: ' + operationStates.evidence_id + '; ' +
+      operationStates.coverage.operation_count + ' operaciones únicas en snapshot COTIZACION exacto.');
+  } else {
+    add('- OPERATION_STATES no tuvo snapshot COTIZACION utilizable en ' + snapshotDate +
+      ': ' + operationStatesError + '. PRECURSE conserva su evidencia P1 independiente.');
+  }
   add('- Linaje: ' + company.lineage.precurse_snapshot_source + ', corte ' +
     company.lineage.precurse_snapshot_date + '; STORE usa ' +
     dimensional.STORE.payload.dimension.identity_contract + '; SELLER usa ' +
