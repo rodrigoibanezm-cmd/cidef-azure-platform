@@ -1,32 +1,27 @@
 # CIDEF Azure — LLM context
-Updated 2026-10-17. Observed/reported status; verify live state before action.
+Updated: 2026-10-20. Read `AGENTS.md` first: **simplest viable solution**, reuse, no unnecessary architectural changes. Check live repo/state before coding.
 
-## Destination
-SINGLE production: Azure PostgreSQL (`cidef-postgres-prod`), Blob (`cidefprodstorage/cidef`), Container Apps, API/MCP, front. GitHub CI/CD.
-Legacy `cidef-data-loader` Neon/Vercel remains untouched until safe cutover; **not** permanent architecture.
-Repos: backend `cidef-azure-platform`; front `cidef-inteligencia-comercial`.
+## Goal
+Single Azure production platform replacing Neon/Vercel. Legacy `cidef-data-loader` is read-only reference for parity; do not alter. Backend `cidef-azure-platform`; front `cidef-inteligencia-comercial`. Azure Blob -> loaders -> Azure PostgreSQL -> certified P1/P2/P3 -> HTTP API -> front. No Neon runtime fallback.
 
-## Done (reported)
-- Azure MCP P1: SALES, RVM, CRM, FORUM, PRICING deployed; deployment run `39040712355` green.
-- FORUM Sept: 8/8 parity. PRICING Oct 14: 64/64 price rows; 899/899 episodes; Dongfeng 007/008.
-- 13 P2 units present under `lib/p2/registry.js`; **not exposed** in deployed MCP.
-- Front deployed on Azure; `/como-vamos` placeholder; `/cierre-mensual` static snapshot.
+## Engines (reported, verify current)
+- P1 SALES/RVM/CRM/FORUM/PRICING migrated; checks against Azure and historical parity. SALES daily/brand/series; FORUM PRECURSE stock of latest snapshot; other FORUM and RVM metrics available subject to contract.
+- 13 P2 units exist; levels of integration validation differ by unit/use case. P3 journal/run trace functional for validated flows.
+- Remote MCP publication is independent of monthly front. For front, backend may call P1/P2/P3 directly, preserving P3; never bypass certified contracts via direct commercial SQL.
+- Availability of a motor ≠ certification of every P1→P2→P3 combination. Validate each combination and report unavailable without invented data.
 
-## Gaps for live `/como-vamos`
-1. SALES MCP deployed: monthly total only; expose P1 daily cutoff, BRAND split, temporal series from existing certified logic.
-2. FORUM: QUOTATIONS/UFIS available. Define and certify PRECURSE; APPLICATIONS != PRECURSE. UFIS = financed units, not CURSES operations.
-3. RVM: units, monthly series, raw labels. Certified brand mapping required; do not manually merge DFM/DONGFENG/DONG FENG. P2 share needs matching numerator/denominator universe.
-4. Publish required P2 tools via **deployed** `mcp/server.js` (generic `lib/mcp/server.js` is not deployed entrypoint).
-5. Backend-to-backend Entra auth from front server to Azure MCP/API; no browser secrets; no stale response cache.
-6. Implement live Company view: SALES VIN, QUOTATIONS, PRECURSE, UFIS, RVM units, RVM share; each Company/FOTON/DONGFENG + series + independent certified cutoff.
-7. Executive narrative last; only if grounded in P1/P2 evidence.
+## Cómo vamos (current design)
+See **`docs/COMO-VAMOS-SNAPSHOTS.md`** for authoritative cache/signature/history contract.
+- Scope ONLY SALES, FORUM, RVM; CRM/PRICING excluded for now.
+- Separate blocks: SALES (including sales rankings), FORUM (QUOTATIONS / PRECURSE / UFIS), RVM (registrations / share).
+- Three snapshot tables, **one per domain**, no megatable and no fourth ranking table.
+- Snapshot read on open/navigation; rebuild on source/engine signature changes, selective and deduplicated. Historical daily snapshots on demand only.
+- Six-month base-100 comparisons computed in P2; source cutoffs independent; PRECURSE = latest snapshot only, never fabricated historical trend.
+- Front `/como-vamos` currently includes presentation scaffold, channel drilldowns and ranking UI; do not assume the certified Azure API is connected until verified. `/cierre-mensual` immutable/out of scope.
+- Next step: verify reuse of existing snapshot/invalidation patterns, implement minimum P1/P2/P3 certified domain payloads and snapshot access, then wire front API. No visual redesign without user decision.
 
-## Invariants
-- Data source: Blob -> loader -> Azure PostgreSQL -> P1/P2; P1 never parses CSV files directly.
-- Run on front open / period change. No hand-updated numbers or fixed commercial commentary.
-- Preserve `/cierre-mensual`, its frozen JSON, and legacy code.
-- Copy verified behavior instead of rewriting. No destructive master operations or Neon dependency.
-- Reconcile historical snapshot SALES discrepancies separately (1040 P1 vs 1041/1044 frozen JSON); not a reason to alter P1.
-
-## Immediate next step
-Propose minimal way to expose existing P1 SALES, certified PRECURSE, P2 share/series in deployed Azure MCP; then implement server-side access and live front. Do not begin by redesigning the front.
+## Rules
+- Source original files to Azure Blob, not Neon-to-Azure table copies.
+- Never rebuild certified business formulas in front or routes; P1 facts, P2 derived, P3 trace.
+- No hardcoded commercial figures; preserve identities and date cutoffs.
+- Work on requested branch; no unnecessary infrastructure, rebuilds, or broad test suites.
