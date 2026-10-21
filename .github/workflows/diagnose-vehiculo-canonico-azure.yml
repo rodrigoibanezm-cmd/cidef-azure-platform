@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   diagnose:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: Production
     timeout-minutes: 5
     env:
@@ -47,5 +47,22 @@ jobs:
           FROM public.vehiculo_canonico
           GROUP BY canal_salida
           ORDER BY canal_salida NULLS LAST;
+
+          -- Verify the existing RVM sync in vehiculos_raw before any correction.
+          SELECT
+            COUNT(*) AS vehiculos_raw_rows,
+            COUNT(*) FILTER (WHERE fecha_inscripcion_rvm IS NOT NULL) AS raw_con_rvm,
+            COUNT(*) FILTER (WHERE fecha_inscripcion_rvm >= DATE '2026-10-01') AS raw_rvm_octubre,
+            MAX(fecha_inscripcion_rvm) AS raw_ultimo_rvm,
+            MAX(fecha_actualizacion_rvm) AS raw_ultima_sincronizacion
+          FROM public.vehiculos_raw;
+
+          SELECT
+            COUNT(*) FILTER (WHERE r.fecha_inscripcion_rvm IS DISTINCT FROM c.fecha_inscripcion_rvm) AS vin_rvm_distinto,
+            COUNT(*) FILTER (WHERE r.fecha_inscripcion_rvm IS NOT NULL AND c.fecha_inscripcion_rvm IS NULL) AS vin_rvm_pendiente_canonico,
+            COUNT(*) FILTER (WHERE c.fecha_inscripcion_rvm IS NOT NULL AND r.fecha_inscripcion_rvm IS NULL) AS vin_rvm_solo_canonico,
+            COUNT(*) FILTER (WHERE r.fecha_inscripcion_rvm >= DATE '2026-10-01' AND c.fecha_inscripcion_rvm IS NULL) AS octubre_pendiente
+          FROM public.vehiculos_raw r
+          JOIN public.vehiculo_canonico c ON c.vin = upper(btrim(r.vin_chasis));
           ROLLBACK;
           SQL
