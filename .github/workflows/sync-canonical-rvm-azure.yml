@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci --ignore-scripts
+      - run: npm install --no-package-lock --ignore-scripts
       - run: node --check scripts/sync-canonical-rvm-azure.js
       - name: Audit or synchronize RVM VIN dates
         run: node scripts/sync-canonical-rvm-azure.js
