@@ -1,0 +1,51 @@
+name: Diagnose Vehiculo Canonico in Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 5
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - name: Inspect canonical VIN coverage (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${AZURE_DATABASE_URL:-}" || { echo "::error::Missing AZURE_DATABASE_URL"; exit 1; }
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client >/dev/null
+          export PGOPTIONS="-c default_transaction_read_only=on -c statement_timeout=30000"
+          psql "$AZURE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -P pager=off <<'SQL'
+          BEGIN READ ONLY;
+          SELECT
+            COUNT(*) AS total_vin,
+            COUNT(*) FILTER (WHERE vigente = true) AS vin_vigentes,
+            COUNT(*) FILTER (WHERE dealer_id IS NOT NULL) AS vin_con_dealer,
+            COUNT(*) FILTER (WHERE canal_salida = 'DEALER' AND dealer_id IS NULL) AS dealer_sin_resolver,
+            COUNT(*) FILTER (WHERE fecha_factura IS NOT NULL) AS vin_con_factura,
+            MAX(fecha_factura) AS ultima_factura,
+            COUNT(*) FILTER (WHERE fecha_inscripcion_rvm IS NOT NULL) AS vin_con_rvm,
+            COUNT(*) FILTER (WHERE fecha_inscripcion_rvm >= DATE '2026-10-01') AS rvm_octubre,
+            MAX(fecha_inscripcion_rvm) AS ultimo_rvm,
+            MAX(canonicalized_at) AS ultima_canonicalizacion
+          FROM public.vehiculo_canonico;
+
+          SELECT
+            canal_salida,
+            COUNT(*) AS vin,
+            COUNT(*) FILTER (WHERE dealer_id IS NOT NULL) AS con_dealer,
+            COUNT(*) FILTER (WHERE fecha_factura IS NOT NULL) AS con_factura,
+            COUNT(*) FILTER (WHERE fecha_inscripcion_rvm IS NOT NULL) AS con_rvm,
+            COUNT(*) FILTER (WHERE fecha_inscripcion_rvm >= DATE '2026-10-01') AS rvm_octubre
+          FROM public.vehiculo_canonico
+          GROUP BY canal_salida
+          ORDER BY canal_salida NULLS LAST;
+          ROLLBACK;
+          SQL
