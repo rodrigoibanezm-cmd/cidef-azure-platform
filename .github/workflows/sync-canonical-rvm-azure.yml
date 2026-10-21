@@ -1,0 +1,31 @@
+name: Sync canonical RVM in Azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply verified changes (false = read-only dry run)'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    environment: Production
+    timeout-minutes: 10
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+      APPLY_CANONICAL_RVM: ${{ inputs.apply }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - run: node --check scripts/sync-canonical-rvm-azure.js
+      - name: Audit or synchronize RVM VIN dates
+        run: node scripts/sync-canonical-rvm-azure.js
