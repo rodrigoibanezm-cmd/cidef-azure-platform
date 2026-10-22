@@ -19,8 +19,8 @@ if(!url||new URL(url).hostname!=='cidef-postgres-prod.postgres.database.azure.co
 const client=new pg.Client({connectionString:url,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:15000,statement_timeout:240000});
 const run_id='forum-ventas-'+randomUUID();
 const today=new Date().toLocaleDateString('en-CA',{timeZone:'America/Santiago'}),year=today.slice(0,4);
-let locked=false,installed=false;
-async function state(payload){if(publish)await client.query(`INSERT INTO public.forum_ventas_snapshot_v01(period,network,dimension,payload,generation_id) VALUES ('STATE','ALL','STATUS',$1::jsonb,$2) ON CONFLICT(period,network,dimension) DO UPDATE SET payload=excluded.payload,generation_id=excluded.generation_id,updated_at=now()`,[JSON.stringify(payload),run_id]);}
+let locked=false,installed=false,publicationAuthorized=false,comparisonReport;
+async function state(payload){if(publish&&publicationAuthorized)await client.query(`INSERT INTO public.forum_ventas_snapshot_v01(period,network,dimension,payload,generation_id) VALUES ('STATE','ALL','STATUS',$1::jsonb,$2) ON CONFLICT(period,network,dimension) DO UPDATE SET payload=excluded.payload,generation_id=excluded.generation_id,updated_at=now()`,[JSON.stringify(payload),run_id]);}
 async function snapshotHash(){return (await client.query("SELECT md5(coalesce(string_agg(md5(t::text),'' ORDER BY period,network,dimension),'')) hash FROM forum_ventas_snapshot_v01 t")).rows[0].hash;}
 async function cutoffs(){return (await client.query(`SELECT (SELECT max(fecha_factura::date)::text FROM ventas_raw WHERE fecha_factura ~ '^\\d{4}-\\d{2}-\\d{2}' AND fecha_factura::date <= $1::date) sales, (SELECT max(snapshot_date)::text FROM forum_funnel_raw WHERE snapshot_date <= $1::date) forum`,[today])).rows[0];}
 const engine=await engineSignature();
@@ -45,6 +45,7 @@ try{
   if(publish){
     const attestation=JSON.parse(await readFile(new URL('../docs/forum-snapshot-parity.json',import.meta.url),'utf8'));
     if(attestation.status!=='PASS'||attestation.engine_signature!==context.engine)throw new Error('INCREMENTAL_LIVE_PARITY_REQUIRED');
+    publicationAuthorized=true;
   }
   const cached=(await client.query("SELECT period,network,dimension,payload,sales_cutoff::text,forum_cutoff::text FROM forum_ventas_snapshot_v01 WHERE dimension='BUNDLE' AND period LIKE $1 ORDER BY network,period",[year+'-%'])).rows;
   const cache=indexCache(cached),dealerIdentities=await loadDealerIdentities(client);
@@ -81,9 +82,7 @@ try{
     const report={status:'PASS',engine_signature:context.engine,source_guard:context.guard,dependency_ms,
       metrics,comparison:'Every business value, identity, dimension, cutoff and quality flag; volatile provenance excluded',
       historical_invalidation:'node --test test/forum-snapshot-incremental.test.js',published:false};
-    const path=process.env.FORUM_SNAPSHOT_REPORT;
-    if(path)await writeFile(path,JSON.stringify(report,null,2)+'\n');
-    console.log(JSON.stringify({event:'INCREMENTAL_FULL_PARITY',...report}));
+    comparisonReport=report;
   }else{
     console.log(JSON.stringify({event:'SNAPSHOT_PLAN',dependency_ms,plan:inspectPlan(context,cache,forceFull)}));
     await state({status:'BUILDING',source_signature:context.guard,sales_cutoff:sourceCutoffs.sales,forum_cutoff:sourceCutoffs.forum,run_id});
@@ -94,6 +93,13 @@ try{
   const finalContracts={};
   for(const source of ['SALES','FORUM'])finalContracts[source]=await callCertified('data_describe',{run_id,source});
   if(digest(finalContracts)!==digest(contracts))throw new Error('CONTRACT_CHANGED_DURING_GENERATION');
+  if(comparisonReport){
+    comparisonReport.total_ms=Date.now()-started;
+    comparisonReport.control_mcp_calls=4;
+    const path=process.env.FORUM_SNAPSHOT_REPORT;
+    if(path)await writeFile(path,JSON.stringify(comparisonReport,null,2)+'\n');
+    console.log(JSON.stringify({event:'INCREMENTAL_FULL_PARITY',...comparisonReport}));
+  }
   if(publish){
     const prior=await snapshotHash();
     try{await replaceSnapshot(client,result.rows.slice(0,1),run_id,{beforeCommit(){throw new Error('EXPECTED_ROLLBACK_PROBE');}});}catch(e){if(e.message!=='EXPECTED_ROLLBACK_PROBE')throw e;}

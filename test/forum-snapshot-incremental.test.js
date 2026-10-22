@@ -98,3 +98,13 @@ test('benchmark fixture reports actual calls and duration; production timing is 
   f.calls.length=0;t=performance.now();await f.run({cache:indexCache(full.rows)});
   console.log(JSON.stringify({fixture:true,full_ms:fullMs,incremental_ms:performance.now()-t,full_calls:fullCalls,incremental_calls:f.calls.length}));
 });
+
+test('cache remains valid after PostgreSQL JSONB reorders every object key',async()=>{
+  const f=fixture(),full=await f.run({forceFull:true});
+  const jsonb=value=>Array.isArray(value)?value.map(jsonb):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort((a,b)=>a.length-b.length||a.localeCompare(b)).map(k=>[k,jsonb(value[k])])):value;
+  const persisted=JSON.parse(JSON.stringify(jsonb(full.rows)));
+  f.calls.length=0;
+  const warm=await f.run({cache:indexCache(persisted)});
+  assert.equal(f.calls.length,0);assert.equal(warm.stats.reused,6);
+  assertSnapshotParity(warm.rows,full.rows);
+});
