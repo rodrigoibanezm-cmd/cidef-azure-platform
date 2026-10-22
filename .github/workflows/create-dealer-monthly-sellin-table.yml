@@ -1,0 +1,28 @@
+name: Create dealers sell-in snapshot table
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create-table:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 5
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create table in Azure PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_DATABASE_URL"
+          psql "$AZURE_DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/sql/dealer-monthly-sellin-snapshots.sql
+      - name: Verify table structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$AZURE_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='dealer_monthly_sellin_snapshots' ORDER BY ordinal_position;"
