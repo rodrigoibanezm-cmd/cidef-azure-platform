@@ -61,3 +61,26 @@ jobs:
             await closeAzurePool();
           }
           EOF
+
+      - name: Preview commercial identity impact (read-only)
+        run: |
+          node --input-type=module <<'EOF'
+          import { refreshVehiculoSalidaV01 } from './lib/canonical/vehiculo-salida-v01.js';
+          import { getAzurePool, closeAzurePool } from './lib/azure-postgres.js';
+          try {
+            const [current] = (await getAzurePool().query(`
+              SELECT count(*) FILTER (WHERE dealer_id IS NOT NULL)::int AS dealer_assigned,
+                     count(*) FILTER (WHERE canal_salida='DEALER')::int AS dealers,
+                     count(*) FILTER (WHERE vendido)::int AS sold
+              FROM public.vehiculo_canonico
+            `)).rows;
+            const { preview } = await refreshVehiculoSalidaV01({ dry_run: true });
+            console.log(JSON.stringify({ current, predicted: preview }, null, 2));
+            if (Number(preview.dealer) < Number(current.dealers) ||
+                Number(preview.vendidos) < Number(current.sold)) {
+              throw new Error('Legacy reconstruction would reduce existing commercial classifications; writing remains blocked');
+            }
+          } finally {
+            await closeAzurePool();
+          }
+          EOF
