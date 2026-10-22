@@ -39,8 +39,10 @@ jobs:
           fi
           node scripts/verify-forum-p1.js
       - name: Test incremental invalidation, parity and rollback
+        if: ${{ !cancelled() }}
         run: node --test test/forum-ventas-snapshot.test.js test/forum-snapshot-incremental.test.js
       - name: Compare full and incremental Forum snapshots without publishing
+        if: ${{ !cancelled() }}
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
           DATABASE_URL: ''
