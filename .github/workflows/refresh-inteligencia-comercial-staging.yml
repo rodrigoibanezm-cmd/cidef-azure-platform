@@ -2,83 +2,111 @@ name: Refresh Inteligencia Comercial results (staging)
 
 on:
   workflow_dispatch:
-    inputs:
-      week_start:
-        description: Monday starting the reporting week
-        required: true
-        default: '2026-10-12'
-        type: string
-      cutoff_date:
-        description: Data cutoff date
-        required: true
-        default: '2026-10-18'
-        type: string
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/refresh-inteligencia-comercial-staging.yml'
 
 permissions:
   contents: read
+
+concurrency:
+  group: weekly-projection-results-staging
+  cancel-in-progress: false
 
 jobs:
   refresh-staging:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - name: Start refresh and wait for durable status
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Detect certified SALES or FORUM publication and refresh only changed sources
         env:
           BASE_URL: https://cidef-intel-comercial-staging.calmforest-1c67ab46.chilecentral.azurecontainerapps.io
-          WEEK_START: ${{ inputs.week_start }}
-          CUTOFF_DATE: ${{ inputs.cutoff_date }}
         shell: bash
         run: |
           set -euo pipefail
-          started=$(date +%s)
-          status_url="$BASE_URL/api/weekly-projections/results?week_start=$WEEK_START&cutoff_date=$CUTOFF_DATE&status=1"
-          request_file=$(mktemp)
-          set +e
-          request_code=$(curl --silent --show-error --max-time 220 \
-            --output "$request_file" --write-out '%{http_code}' \
-            --header 'Content-Type: application/json' \
-            --request POST \
-            --data "{\"week_start\":\"$WEEK_START\",\"cutoff_date\":\"$CUTOFF_DATE\"}" \
-            "$BASE_URL/api/weekly-projections/results")
-          request_exit=$?
-          set -e
-          echo "Refresh request ended with curl=$request_exit http=$request_code; polling PostgreSQL-backed status."
-
-          for attempt in $(seq 1 440); do
-            status_file=$(mktemp)
-            status_code=$(curl --silent --show-error --max-time 30 \
-              --output "$status_file" --write-out '%{http_code}' "$status_url" || true)
-            if [[ "$status_code" != "200" ]]; then
-              sleep 15
-              continue
-            fi
-            state=$(jq -r '.status // "unknown"' "$status_file")
-            if [[ "$state" == "completed" ]]; then
-              finished=$(date +%s)
-              elapsed=$((finished - started))
-              {
-                echo "## Staging projection refresh"
-                echo "- Week start: $WEEK_START"
-                echo "- Cutoff: $CUTOFF_DATE"
-                echo "- Results: $(jq -r '.results // "persisted snapshot"' "$request_file" 2>/dev/null || echo "persisted snapshot")"
-                echo "- Stores: $(jq -r '.completedStores' "$status_file") / $(jq -r '.totalStores' "$status_file")"
-                echo "- Status: $state"
-                echo "- Started: $(jq -r '.started_at' "$status_file")"
-                echo "- Finished: $(jq -r '.finished_at' "$status_file")"
-                echo "- Server runtime: $(jq -r '.duration_ms' "$status_file") ms"
-                echo "- Action elapsed including polling: ${elapsed}s"
-              } >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            if [[ "$state" == "failed" ]]; then
-              echo "::error::Staging refresh failed: $(jq -r '.error // "unknown error"' "$status_file")"
-              exit 1
-            fi
-            if [[ "$state" == "idle" ]]; then
-              echo "::error::No refresh job is recorded for this cut (POST HTTP $request_code, curl exit $request_exit)."
-              exit 1
-            fi
-            sleep 15
-          done
-          echo "::error::Staging refresh did not finish within the 110 minute polling window."
-          exit 1
+          node --input-type=module <<'NODE'
+          import { appendFile } from 'node:fs/promises';
+          // Both existing legacy workflows publish forum_ventas_snapshot_v01 READY
+          // after their successful Azure load. The API verifies that marker itself.
+          // No cross-repository token, RAW scan or commercial calculation on polling.
+          const base = process.env.BASE_URL;
+          if (base !== 'https://cidef-intel-comercial-staging.calmforest-1c67ab46.chilecentral.azurecontainerapps.io') throw new Error('STAGING_ONLY');
+          const api = base + '/api/weekly-projections/results';
+          const read = async () => {
+            const response = await fetch(api + '?status=1&sources=1', { signal: AbortSignal.timeout(30000), cache: 'no-store' });
+            const state = await response.json();
+            if (!response.ok || !state.ok || state.environment !== 'staging') throw new Error(state.error || 'STAGING_SNAPSHOT_API_NOT_READY');
+            return state;
+          };
+          const summary = async text => {
+            console.log(text);
+            if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, text + '\n');
+          };
+          const before = await read();
+          if (!before.snapshot_version) {
+            await summary('Staging deployment pending. Automatic generation is deferred until the new API is available.');
+            process.exit(0);
+          }
+          const source = before.source_state;
+          if (source?.status !== 'READY') {
+            await summary('Sources deferred: ' + (source?.status || 'UNAVAILABLE') + '. The previous snapshot is retained.');
+            process.exit(0);
+          }
+          if (before.status === 'running') {
+            await summary('A live staging refresh already owns the lease. No duplicate calculation.');
+            process.exit(0);
+          }
+          if (before.status === 'completed' && before.sources?.generation_id === source.generation_id &&
+              before.version === before.snapshot_version) {
+            await summary('Certified publication already processed: ' + source.generation_id + '. No recalculation.');
+            process.exit(0);
+          }
+          // Do not rely on the long POST connection staying open through Azure ingress.
+          let postOutcome;
+          const post = fetch(api, { method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ automatic: true }), signal: AbortSignal.timeout(220000) })
+            .then(async response => { postOutcome = { status: response.status, data: await response.json() }; })
+            .catch(error => { postOutcome = { error: error.message }; });
+          for (let attempt = 0; attempt < 440; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 15000));
+            let state;
+            try { state = await read(); } catch (error) { console.log('Read retry: ' + error.message); continue; }
+            const ours = Boolean(state.job_id) && state.job_id !== before.job_id;
+            if (ours && state.status === 'completed') {
+              await summary('Staging snapshot ' + state.cutoff_date + ' (week ' + state.week_start + '): ' +
+                (state.skipped ? 'sources unchanged; publication recorded without recalculation' : 'published atomically') +
+                '. SALES cutoff ' + state.sources.sales_cutoff + '; FORUM cutoff ' + state.sources.forum_cutoff +
+                '; source execution ' + state.sources.generation_id + '.');
+              const getResult = async suffix => {
+                const response = await fetch(api + suffix, { signal: AbortSignal.timeout(30000), cache: 'no-store' });
+                const result = await response.json();
+                if (!response.ok || !result.ok) throw new Error(result.error || 'SNAPSHOT_READ_FAILED');
+                return result;
+              };
+              const company = await getResult('');
+              const storeId = company.storeSales?.[0]?.sucursal_id;
+              if (!storeId) throw new Error('SNAPSHOT_STORE_MISSING');
+              const store = await getResult('?sucursal_id=' + encodeURIComponent(storeId));
+              const again = await getResult('');
+              if (![company,store,again].every(result => result.snapshot?.generation_id === company.snapshot.generation_id &&
+                  Array.isArray(result.admin?.projections) && Array.isArray(result.admin?.sent_not_invoiced))) throw new Error('SNAPSHOT_NAVIGATION_FAILED');
+              await summary('Read-only company → store → company validation PASS; live projection and sent-not-invoiced arrays present.');
+              await post;
+              process.exit(0);
+            }
+            if (ours && ['failed', 'expired'].includes(state.status)) throw new Error(state.error || 'REFRESH_LEASE_EXPIRED');
+            if (postOutcome?.status >= 400) throw new Error(postOutcome.data?.error || 'REFRESH_REQUEST_FAILED');
+            if (postOutcome?.data?.status === 'running' && !postOutcome.data.claimed) {
+              await summary('Another refresh claimed the staging lease. No duplicate calculation.');
+              process.exit(0);
+            }
+            if (postOutcome?.error && !ours) throw new Error(postOutcome.error);
+          }
+          throw new Error('REFRESH_TIMEOUT: next scheduled run recovers the expired lease; previous snapshot retained.');
+          NODE
