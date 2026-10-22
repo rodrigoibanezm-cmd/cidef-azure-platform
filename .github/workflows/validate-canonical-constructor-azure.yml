@@ -35,3 +35,29 @@ jobs:
             await closeAzurePool();
           }
           EOF
+
+      - name: Verify RVM parity and commercial identities (read-only)
+        shell: bash
+        run: |
+          node --input-type=module <<'EOF'
+          import { getAzurePool, closeAzurePool } from './lib/azure-postgres.js';
+          const db = getAzurePool();
+          try {
+            const { rows: [audit] } = await db.query(`
+              SELECT
+                (SELECT count(*) FROM public.vehiculo_canonico) AS canonical_vins,
+                (SELECT count(*) FROM public.vehiculo_canonico WHERE dealer_id IS NOT NULL) AS dealer_assigned,
+                (SELECT count(*) FROM public.vehiculo_canonico WHERE canal_salida='DEALER' AND dealer_id IS NULL) AS dealer_unresolved,
+                (SELECT max(fecha_inscripcion_rvm) FROM public.vehiculo_canonico) AS latest_canonical_rvm,
+                (SELECT count(*) FROM public.vehiculo_canonico WHERE fecha_inscripcion_rvm >= DATE '2026-10-01') AS october_rvm,
+                (SELECT count(*) FROM public.vehiculos_raw r JOIN public.vehiculo_canonico c
+                   ON c.vin=upper(btrim(r.vin_chasis))
+                   WHERE r.fecha_inscripcion_rvm IS NOT NULL
+                     AND c.fecha_inscripcion_rvm IS DISTINCT FROM r.fecha_inscripcion_rvm) AS rvm_mismatch
+            `);
+            console.log(JSON.stringify(audit, null, 2));
+            if (Number(audit.rvm_mismatch) !== 0) throw new Error('RVM mismatch: cannot enable rebuild');
+          } finally {
+            await closeAzurePool();
+          }
+          EOF
