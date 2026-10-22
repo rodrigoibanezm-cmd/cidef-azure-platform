@@ -52,3 +52,44 @@ In the canonical maintenance caller, point its existing snapshot test command at
 ## Amunátegui remains a source-classification blocker
 
 Live SALES P1 FETCH, run `forum-recover-2026-10-22`, September cutoff 2026-09-30, `commercial_universe=OWN_STORES`, `store_id=15`, returns VIN `LVAV2MAB2TU484443`, invoice `75153`, operation `22082`, sale date `2026-09-23`, label `Amunategui`, dealer/group null. This is the same one-sale classification in the existing snapshot. The SALES contract certifies the recognized source category; the snapshot publisher cannot override it. No front filter, hardcoded VIN reclassification, source change or frozen-close edit was introduced. Removing this sale from OWN_STORES requires correcting the certified upstream source/identity, then rebuilding; that production correction is not part of this inactive delivery.
+
+## Incremental publication — 2026-10-22
+
+The publisher now supports `--compare`, `--validate`, `--publish`, and optional
+`--full`. Production writes require the existing handoff flag AND a PASS report
+at `docs/forum-snapshot-parity.json` matching the engine/remote-contract signature.
+No attestation is supplied until the live read-only comparison succeeds.
+
+Cache metadata lives inside the existing BUNDLE JSON payload (`refresh`). No new
+schema, source load, engine, workflow, service or database is introduced.
+
+- SALES validity: one captured, unmodified P1 preparation; recognize each original
+  historical cutoff and hash the complete FETCH fields plus network and export
+  metadata. LAST-before-cutoff is preserved; current facts are never substituted
+  for historical recognition. This is local invalidation work, not 20 repeated
+  database preparations or remote MCP requests.
+- FORUM validity: fingerprint the dated-event inputs of the existing universe,
+  by quotation/curse month. Current state corrections invalidate old cohorts.
+  Repeated ingestion timestamps/snapshot row counts do not invalidate business
+  evidence. Master/alias contents, universe SQL definition, local source bytes
+  and live data_describe contracts invalidate conservatively.
+- A cumulative bundle includes prior SALES facts and prior FORUM history. Earlier
+  corrections therefore invalidate dependent bundles too, but unchanged FORUM
+  monthly evidence is reused rather than observed repeatedly.
+- Missing/legacy/corrupt cache metadata forces full generation. `--full` always
+  remains available. Before/after dependency capture and contract comparison
+  reject concurrent source/contract changes. Existing acceptance and rollback
+  checks remain. Unchanged business payloads/P3 provenance are retained; all rows
+  receive the same atomic publication generation because the current reader
+  selects full history by generation_id.
+- The existing Verify FORUM P1 Action runs local tests and a real, read-only full
+  build, warm incremental reuse, and open-month SALES refresh. All business values,
+  dimensions, identity members, cutoffs and quality flags must match exactly.
+  Volatile evidence ids/run ids/execution metadata are excluded explicitly.
+  The report distinguishes dependency capture time, generation time, logical MCP
+  calls and transport attempts. Four data_describe control calls per run are
+  outside generation counts and must be added for end-to-end MCP accounting.
+
+Initial adoption needs one full generation to populate signatures. That bootstrap
+is not a steady-state speed measurement. The source fingerprint work itself is
+measured; no production performance claim follows from fixture tests.

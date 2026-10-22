@@ -2,6 +2,13 @@ name: Verify FORUM P1 on Azure
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/forum-snapshot/**'
+      - 'scripts/refresh-forum-ventas-snapshot-azure.js'
+      - 'test/forum-snapshot-incremental.test.js'
+      - '.github/workflows/verify-forum-p1.yml'
 
 permissions:
   contents: read
@@ -9,7 +16,7 @@ permissions:
 jobs:
   verify-forum-p1:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 75
     environment: Production
     steps:
       - uses: actions/checkout@v4
@@ -31,3 +38,18 @@ jobs:
             exit 1
           fi
           node scripts/verify-forum-p1.js
+      - name: Test incremental invalidation, parity and rollback
+        run: node --test test/forum-ventas-snapshot.test.js test/forum-snapshot-incremental.test.js
+      - name: Compare full and incremental Forum snapshots without publishing
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+          DATABASE_URL: ''
+          POSTGRES_URL: ''
+          FORUM_SNAPSHOT_REPORT: forum-snapshot-parity.json
+        run: node scripts/refresh-forum-ventas-snapshot-azure.js --compare
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: forum-snapshot-parity
+          path: forum-snapshot-parity.json
+          if-no-files-found: ignore
