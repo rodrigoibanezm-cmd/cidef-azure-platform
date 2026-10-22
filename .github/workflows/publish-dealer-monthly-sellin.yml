@@ -1,0 +1,32 @@
+name: Publish dealers monthly sell-in snapshot
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Sales year'
+        required: true
+        default: '2026'
+        type: string
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 60
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+      SELLIN_YEAR: ${{ inputs.year }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install existing P1 dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts pg@8.16.3
+      - name: Check script syntax
+        run: node --check scripts/publish-dealer-monthly-sellin.js
+      - name: Publish from certified SALES P1
+        run: |
+          test -n "$AZURE_DATABASE_URL"
+          node scripts/publish-dealer-monthly-sellin.js
