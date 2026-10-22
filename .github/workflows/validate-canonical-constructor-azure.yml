@@ -1,0 +1,37 @@
+name: Validate Canonical Constructor Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    environment: Production
+    timeout-minutes: 10
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-package-lock --ignore-scripts
+      - name: Check imported modules
+        run: |
+          node --check lib/canonical/vehiculo-salida-v01.js
+          node --check lib/canonical/refresh-vehiculo-canonico-v01.js
+      - name: Diagnose canonical builder (read-only)
+        run: |
+          node --input-type=module <<'EOF'
+          import { refreshVehiculoCanonicoV01 } from './lib/canonical/refresh-vehiculo-canonico-v01.js';
+          import { closeAzurePool } from './lib/azure-postgres.js';
+          try {
+            const result = await refreshVehiculoCanonicoV01({ dry_run: true });
+            console.log(JSON.stringify(result, null, 2));
+          } finally {
+            await closeAzurePool();
+          }
+          EOF
