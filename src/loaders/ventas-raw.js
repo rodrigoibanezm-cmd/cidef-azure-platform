@@ -13,6 +13,12 @@ const DATABASE_URL = process.env.AZURE_DATABASE_URL;
 const STORAGE_CONNECTION_STRING = process.env.AZURE_STORAGE_CONNECTION_STRING;
 const AZURE_CONTAINER = process.env.AZURE_CONTAINER || 'cidef';
 const AZURE_SALES_PREFIX = process.env.AZURE_SALES_PREFIX || 'ventas/Estadisticas_de_Venta_por_Vista_';
+const SALES_SOURCE_DATE = process.env.AZURE_SALES_SOURCE_DATE || null;
+if (SALES_SOURCE_DATE && (!/^\d{4}-\d{2}-\d{2}$/.test(SALES_SOURCE_DATE)
+  || Number.isNaN(Date.parse(`${SALES_SOURCE_DATE}T00:00:00Z`))
+  || new Date(`${SALES_SOURCE_DATE}T00:00:00Z`).toISOString().slice(0, 10) !== SALES_SOURCE_DATE)) {
+  throw new Error('AZURE_SALES_SOURCE_DATE must be a valid YYYY-MM-DD date');
+}
 const SHEET_NAME = 'Ventas';
 const TABLE_NAME = process.env.AZURE_SALES_TARGET_TABLE || 'ventas_raw_azure_validation';
 if (TABLE_NAME !== 'ventas_raw_azure_validation') {
@@ -65,6 +71,14 @@ async function resolveSalesWorkbookPath() {
 
   const service = BlobServiceClient.fromConnectionString(STORAGE_CONNECTION_STRING);
   const container = service.getContainerClient(AZURE_CONTAINER);
+  if (SALES_SOURCE_DATE) {
+    const blobName = `${AZURE_SALES_PREFIX}${SALES_SOURCE_DATE.replaceAll('-', '_')}.xlsx`;
+    const blobClient = container.getBlobClient(blobName);
+    if (!await blobClient.exists()) throw new Error(`SALES workbook missing: ${blobName}`);
+    const filePath = path.join(os.tmpdir(), `cidef-sales-${Date.now()}.xlsx`);
+    await blobClient.downloadToFile(filePath);
+    return { filePath, sourceFile: `azure://${AZURE_CONTAINER}/${blobName}`, cleanup: true };
+  }
   let latest = null;
 
   for await (const blob of container.listBlobsFlat({ prefix: AZURE_SALES_PREFIX })) {
