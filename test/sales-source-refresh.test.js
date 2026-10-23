@@ -93,7 +93,10 @@ test('days and four imports are sequential; canonical and journal precede each c
   const db = fakeDatabase(), events = [];
   const options = { pool: db.pool, container: fixtureContainer(),
     dates: ['2026-10-23', '2026-10-22'], loaders: fixtureLoaders(events),
-    refreshCanonical: async ({ execute }) => { events.push('canonical'); await execute('SELECT fixture'); return { ok: true }; } };
+    refreshCanonical: async ({ dry_run, execute }) => {
+      if (dry_run) return { before: { canonical_extra_before: 0 } };
+      events.push('canonical'); await execute('SELECT fixture'); return { base: { rows_deleted: 0 } };
+    } };
   const results = await runSalesRefresh(options);
   assert.deepEqual(events, [
     ['2026-10-22', 0], ['2026-10-22', 1], ['2026-10-22', 2], ['2026-10-22', 3], 'canonical',
@@ -114,7 +117,10 @@ test('a failed day rolls back and blocks subsequent days, keeping earlier comple
   const db = fakeDatabase(), events = [], canonicalDates = [];
   await assert.rejects(runSalesRefresh({ dates: ['2026-10-21', '2026-10-22', '2026-10-23'],
     pool: db.pool, container: fixtureContainer(), loaders: fixtureLoaders(events, '2026-10-22'),
-    refreshCanonical: async () => { canonicalDates.push('called'); return {}; },
+    refreshCanonical: async ({ dry_run }) => {
+      if (dry_run) return { before: { canonical_extra_before: 0 } };
+      canonicalDates.push('called'); return { base: { rows_deleted: 0 } };
+    },
   }), error => error.sourceDate === '2026-10-22' && error.completedDates[0] === '2026-10-21');
   assert.equal(db.journal.size, 1);
   assert.equal(canonicalDates.length, 1);
@@ -146,6 +152,28 @@ test('canonical failure rolls back the entire day and creates no success marker'
 test('canonical writes still require an explicit transaction executor', async () => {
   await assert.rejects(refreshVehiculoCanonicoV01({ dry_run: false }), /transaction-scoped/);
 });
+
+for (const phase of ['preview', 'write']) {
+  test(`canonical VIN deletion at ${phase} rolls back the day without a success marker`, async () => {
+    const db = fakeDatabase(), events = [], canonicalCalls = [];
+    await assert.rejects(runSalesRefresh({ dates: ['2026-10-23', '2026-10-24'], pool: db.pool,
+      container: fixtureContainer(), loaders: fixtureLoaders(events),
+      refreshCanonical: async ({ dry_run, execute }) => {
+        canonicalCalls.push(dry_run);
+        assert.ok(db.calls.some(([sql]) => sql === 'BEGIN'));
+        assert.ok(!db.calls.some(([sql]) => sql === 'COMMIT'));
+        await execute('SELECT fixture_guard');
+        if (dry_run) return { before: { canonical_extra_before: phase === 'preview' ? 1 : 0 } };
+        return { base: { rows_deleted: 1 } };
+      },
+    }), error => error.code === 'ERR_ASSERTION' && error.sourceDate === '2026-10-23');
+    assert.deepEqual(canonicalCalls, phase === 'preview' ? [true] : [true, false]);
+    assert.equal(db.journal.size, 0);
+    assert.equal(db.calls.filter(([sql]) => sql === 'ROLLBACK').length, 1);
+    assert.ok(!db.calls.some(([sql]) => sql === 'COMMIT' || sql.includes('INSERT INTO public.sales_refresh_runs')));
+    assert.ok(!events.some(([date]) => date === '2026-10-24'));
+  });
+}
 
 test('the reused canonical updater forwards every helper to the injected executor', async () => {
   const statements = [];

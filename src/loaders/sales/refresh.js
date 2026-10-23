@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import assert from 'node:assert/strict';
 import { getAzurePool } from '../../../lib/azure-postgres.js';
 import { refreshVehiculoCanonicoV01 } from '../../../lib/canonical/refresh-vehiculo-canonico-v01.js';
 import { run as vehicles } from './import-vehiculos.js';
@@ -57,7 +58,10 @@ export async function refreshDay({ client, container, date, loaders = LOADERS,
         sources[TABLES[index]] = await loaders[index]();
       }
       // Existing canonical SQL and recognition/resolution rules, on this same transaction.
+      const preview = await refreshCanonical({ dry_run: true, execute: queryDb });
+      assert.equal(Number(preview.before.canonical_extra_before), 0, 'Refresh would delete canonical VINs; blocked');
       const canonical = await refreshCanonical({ dry_run: false, execute: queryDb });
+      assert.equal(Number(canonical.base.rows_deleted), 0, 'Canonical refresh deleted records');
       const result = { engine: 'refresh_sales_sources_v01', version: 'azure-1', date, runId,
         signature, status: 'LOADED', strategy: 'FOUR_SOURCE_REFRESH_THEN_CANONICALIZE',
         sources, canonical, elapsedMs: Date.now() - startedAt };
