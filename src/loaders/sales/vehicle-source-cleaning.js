@@ -3,7 +3,7 @@ import { queryDb } from './db.js';
 const KEEP_COLUMNS = [
   'nro_stock', 'vin_chasis', 'marca', 'modelo', 'patente', 'ano', 'color',
   'etapa', 'bodega', 'vigente', 'fecha_nv', 'nota_de_venta', 'vendedor',
-  'sucursal_venta', 'factura', 'numero_factura', 'fecha_factura', 'rut', 'cliente',
+  'factura', 'numero_factura', 'fecha_factura', 'rut', 'cliente',
   'fecha_entrega_planificada', 'pendiente_entrega', 'esta_fisico',
   'esta_reservado', 'esta_en_transito', 'en_patio', 'fecha_ingreso_stk',
   'tipo_ficha', 'fecha_eta',

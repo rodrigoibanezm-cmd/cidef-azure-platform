@@ -1,4 +1,4 @@
-// Adapted from cidef-data-loader; only Azure I/O changes.
+// Adapted from cidef-data-loader: Azure I/O and transactional publication guards.
 import { findDailyXlsx, downloadBlobObject, blobSource } from './source-io.js';
 import { parseSheet } from './xlsx.js';
 import { queryDb, replaceTableSnapshot } from './db.js';
@@ -118,12 +118,17 @@ async function applyOperationalDateOverride({ label, vins, operationalDate }) {
     'UPDATE ventas_raw SET fecha_factura = $1 WHERE upper(btrim(nro_vin_chasis)) IN (' + placeholders + ') RETURNING nro_vin_chasis',
     [operationalDate, ...vins],
   );
-  if (updated.length !== vins.length) {
-    const updatedVins = new Set(updated.map((row) => String(row.nro_vin_chasis ?? '').trim().toUpperCase()));
-    const missingVins = vins.filter((vin) => !updatedVins.has(vin));
-    console.warn(
-      `${label} operational date override partial: expected ${vins.length}, updated ${updated.length}, missing: ${missingVins.join(', ')}`
-    );
+  // Check distinct VINs and persisted dates, not row counts: duplicates can hide a missing VIN.
+  const verified = await queryDb(
+    'SELECT upper(btrim(nro_vin_chasis)) AS vin, ' +
+    'bool_and(fecha_factura::timestamp IS NOT DISTINCT FROM $1::timestamp) AS corrected ' +
+    'FROM ventas_raw WHERE upper(btrim(nro_vin_chasis)) IN (' + placeholders + ') GROUP BY 1',
+    [operationalDate, ...vins],
+  );
+  const correctedVins = new Set(verified.filter(row => row.corrected === true).map(row => row.vin));
+  const missingVins = vins.filter(vin => !correctedVins.has(vin));
+  if (missingVins.length) {
+    throw new Error(`${label} operational date corrections missing or invalid: ${missingVins.join(', ')}`);
   }
   return updated.length;
 }
