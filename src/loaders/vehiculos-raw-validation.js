@@ -59,8 +59,13 @@ async function main() {
       await client.query('INSERT INTO ' + q(stage) + ' (' + cols.map(q).join(',') + ') VALUES ' + tuples, vals);
       pending = [];
     }
+    let sheetCount = 0;
     for await (const sheet of reader) {
-      if (sheet.name !== 'Inventario Vehiculos Global') continue;
+      sheetCount++;
+      console.log('[vehicles-loader] Worksheet discovered:', JSON.stringify({name:sheet.name,id:sheet.id}));
+      // ExcelJS streaming may expose Sheet1 instead of the source's visible tab name.
+      // Accept the first worksheet only, matching the single-sheet source contract.
+      if (sheet.name !== 'Inventario Vehiculos Global' && !(sheetCount === 1 && String(sheet.id) === '1')) continue;
       found = true;
       for await (const row of sheet) {
         const values = Array.from({ length:row.cellCount }, (_,i) => {
