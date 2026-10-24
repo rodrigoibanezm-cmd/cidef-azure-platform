@@ -24,7 +24,7 @@ export async function beginTableSnapshot(tableName, names) {
 }
 
 export async function appendTableRows(snapshot, rows) {
-  const batchSize = Math.max(1, Math.min(50, Math.floor(8000 / snapshot.columns.length)));
+  const batchSize = Math.max(1, Math.min(500, Math.floor(8000 / snapshot.columns.length)));
   for (let offset = 0; offset < rows.length; offset += batchSize) {
     const batch = rows.slice(offset, offset + batchSize);
     const values = batch.flat();
@@ -66,7 +66,7 @@ export async function appendTableData(tableName, names, rows) {
   const target = await columns(tableName);
   const types = new Map(target.map(c => [c.name, c.type]));
   if (!target.length || names.some(n => !types.has(n))) throw new Error('Credit-note RAW schema mismatch');
-  const batchSize = Math.max(1, Math.min(50, Math.floor(8000 / names.length)));
+  const batchSize = Math.max(1, Math.min(500, Math.floor(8000 / names.length)));
   for (let offset = 0; offset < rows.length; offset += batchSize) {
     const batch = rows.slice(offset, offset + batchSize);
     const tuples = batch.map((row, i) => '(' + row.map((_, j) => '$' + (i * names.length + j + 1) + '::' + types.get(names[j])).join(',') + ')');
