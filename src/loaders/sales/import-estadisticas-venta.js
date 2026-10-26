@@ -1,7 +1,8 @@
 // Adapted from cidef-data-loader: Azure I/O and transactional publication guards.
 import { findDailyXlsx, downloadBlobObject, blobSource } from './source-io.js';
 import { parseSheet } from './xlsx.js';
-import { queryDb, replaceTableSnapshot } from './db.js';
+import { queryDb, quoteIdent, replaceTableSnapshot, beginTableSnapshot, appendTableRows,
+  publishTableSnapshotDiff } from './db.js';
 
 const FILE_PREFIX = 'ventas/Estadisticas_de_Venta_por_Vista_';
 const SHEET_NAME = 'Ventas';
@@ -112,17 +113,17 @@ function normalizeCustomerCategory(value) {
   return String(value ?? '').trim().replace(/\s+/g, ' ');
 }
 
-async function applyOperationalDateOverride({ label, vins, operationalDate }) {
+async function applyOperationalDateOverride({ label, vins, operationalDate }, tableName) {
   const placeholders = vins.map((_, index) => '$' + (index + 2)).join(', ');
   const updated = await queryDb(
-    'UPDATE ventas_raw SET fecha_factura = $1 WHERE upper(btrim(nro_vin_chasis)) IN (' + placeholders + ') RETURNING nro_vin_chasis',
+    'UPDATE ' + quoteIdent(tableName) + ' SET fecha_factura = $1 WHERE upper(btrim(nro_vin_chasis)) IN (' + placeholders + ') RETURNING nro_vin_chasis',
     [operationalDate, ...vins],
   );
   // Check distinct VINs and persisted dates, not row counts: duplicates can hide a missing VIN.
   const verified = await queryDb(
     'SELECT upper(btrim(nro_vin_chasis)) AS vin, ' +
     'bool_and(fecha_factura::timestamp IS NOT DISTINCT FROM $1::timestamp) AS corrected ' +
-    'FROM ventas_raw WHERE upper(btrim(nro_vin_chasis)) IN (' + placeholders + ') GROUP BY 1',
+    'FROM ' + quoteIdent(tableName) + ' WHERE upper(btrim(nro_vin_chasis)) IN (' + placeholders + ') GROUP BY 1',
     [operationalDate, ...vins],
   );
   const correctedVins = new Set(verified.filter(row => row.corrected === true).map(row => row.vin));
@@ -133,15 +134,18 @@ async function applyOperationalDateOverride({ label, vins, operationalDate }) {
   return updated.length;
 }
 
-async function applyOperationalDateOverrides() {
+async function applyOperationalDateOverrides(tableName = TABLE_NAME) {
   let updatedTotal = 0;
   for (const override of OPERATIONAL_DATE_OVERRIDES) {
-    updatedTotal += await applyOperationalDateOverride(override);
+    updatedTotal += await applyOperationalDateOverride(override, tableName);
   }
   return updatedTotal;
 }
 
-export async function run() {
+// The existing daily source-context transaction owns commit/rollback and staging
+// cleanup on failure. No environment flag or default caller enables incremental.
+export async function run({ incremental = false } = {}) {
+  if (typeof incremental !== 'boolean') throw new Error('incremental must be a boolean');
   const startedAt = Date.now();
   const file = await findDailyXlsx(FILE_PREFIX);
   const buffer = await downloadBlobObject(file.Key);
@@ -179,14 +183,27 @@ export async function run() {
     rows.push(output);
   }
 
-  const result = await replaceTableSnapshot(TABLE_NAME, KEEP_COLUMNS, rows);
-  const operationalDateOverridesApplied = await applyOperationalDateOverrides();
+  let result, operationalDateOverridesApplied, differentialPublication;
+  if (incremental) {
+    if (!rows.length) throw new Error('Empty SALES snapshot blocked: ' + TABLE_NAME);
+    const snapshot = await beginTableSnapshot(TABLE_NAME, KEEP_COLUMNS);
+    result = await appendTableRows(snapshot, rows);
+    operationalDateOverridesApplied = await applyOperationalDateOverrides(snapshot.staging);
+    // Reuse the existing sales synchronizer's id key, never VIN. The publisher
+    // audits both inputs and falls back to multiset differences for null/duplicate ids.
+    differentialPublication = await publishTableSnapshotDiff(snapshot, { keyColumns: ['id'] });
+    await queryDb('DROP TABLE ' + quoteIdent(snapshot.staging));
+  } else {
+    result = await replaceTableSnapshot(TABLE_NAME, KEEP_COLUMNS, rows);
+    operationalDateOverridesApplied = await applyOperationalDateOverrides();
+  }
 
   return {
     source: blobSource(file),
     sheet: SHEET_NAME,
     table: TABLE_NAME,
-    strategy: 'FULL_SNAPSHOT_REPLACE',
+    strategy: incremental ? 'INCREMENTAL_SNAPSHOT_DIFF' : 'FULL_SNAPSHOT_REPLACE',
+    ...(incremental ? { differentialPublication } : {}),
     rowsLoaded: parsed.rows.length,
     rowsExcludedByBrand,
     rowsExcludedByCustomerCategory,
