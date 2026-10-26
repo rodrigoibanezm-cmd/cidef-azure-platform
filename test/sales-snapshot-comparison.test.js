@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { compareTableSnapshot, quoteIdent } from '../src/loaders/sales/db.js';
+import { compareTableSnapshot, publishTableSnapshotDiff, quoteIdent } from '../src/loaders/sales/db.js';
 import { withSourceContext } from '../src/loaders/sales/source-io.js';
 
 // SQL integration tests use only an explicitly supplied, dedicated LOCAL database:
@@ -17,7 +17,8 @@ if (connectionString) {
 }
 const sqlTest = (name, fn) => test(name, { skip: !connectionString }, fn);
 
-async function fixture({ tableName = 'ventas_raw', types, raw = [], staged = [], stageNames = Object.keys(types) }, fn) {
+async function fixture({ tableName = 'ventas_raw', types, raw = [], staged = [],
+  stageNames = Object.keys(types), readOnly = true, setup = async () => {} }, fn) {
   const client = new pg.Client({ connectionString });
   const staging = tableName + '__loading_' + randomUUID().replaceAll('-', '');
   const snapshot = { tableName, staging, columns: Object.keys(types) };
@@ -33,21 +34,22 @@ async function fixture({ tableName = 'ventas_raw', types, raw = [], staged = [],
           VALUES (${names.map((_, i) => '$' + (i + 1)).join(',')})`, row);
       }
     }
+    await setup(client, snapshot);
     await client.query('COMMIT');
     created = true;
     // An accidental DDL/DML in the comparator fails at PostgreSQL itself.
-    await client.query('BEGIN READ ONLY');
+    await client.query(readOnly ? 'BEGIN READ ONLY' : 'BEGIN');
     const statements = [];
     const reader = { async query(sql, params) {
       statements.push(sql);
-      assert.match(sql.trim(), /^(SELECT|WITH)\b/);
+      if (readOnly) assert.match(sql.trim(), /^(SELECT|WITH)\b/);
       return client.query(sql, params);
     } };
     const before = (await client.query(`SELECT to_jsonb(t) AS row FROM public.${quoteIdent(tableName)} t`)).rows;
-    await withSourceContext({ client: reader }, () => fn(snapshot));
+    await withSourceContext({ client: reader }, () => fn(snapshot, { client, statements }));
     const after = (await client.query(`SELECT to_jsonb(t) AS row FROM public.${quoteIdent(tableName)} t`)).rows;
-    assert.deepEqual(after, before);
-    assert.ok(statements.some(sql => sql.includes('EXCEPT ALL')));
+    if (readOnly) assert.deepEqual(after, before);
+    if (readOnly) assert.ok(statements.some(sql => sql.includes('EXCEPT ALL')));
   } finally {
     await client.query('ROLLBACK');
     if (created) {
@@ -181,11 +183,126 @@ test('reject invalid targets, credit notes and invalid options before issuing an
       { ...snapshot, tableName: 'vehiculo_canonico' }, { ...snapshot, staging: 'ventas_raw' },
       { ...snapshot, staging: 'ventas_raw__loading_x; DROP TABLE ventas_raw' }]) {
       await assert.rejects(compareTableSnapshot(invalid), /Invalid SALES comparison/);
+      await assert.rejects(publishTableSnapshotDiff(invalid), /Invalid SALES comparison/);
     }
     for (const options of [{ sampleLimit: -1 }, { sampleLimit: 1001 }, { sampleLimit: 1.5 },
       { keyColumns: ['id', 'id'] }, { keyColumns: 'id' }, { keyColumns: [null] }]) {
       await assert.rejects(compareTableSnapshot(snapshot, options), /sampleLimit|key columns/);
+      await assert.rejects(publishTableSnapshotDiff(snapshot, options), /sampleLimit|key columns/);
     }
+  });
+});
+
+sqlTest('publication updates only changed keys and preserves unchanged row identity and RAW-only fields', async () => {
+  await fixture({ readOnly: false,
+    types: { id: 'integer PRIMARY KEY', vin: 'text', state: 'text', lifecycle: "text DEFAULT 'new-default'" },
+    stageNames: ['id', 'vin', 'state'],
+    raw: [[1, 'SHARED', 'stock', 'keep-updated'], [2, 'SHARED', 'sold', 'keep-unchanged'], [4, 'OLD', 'stock', 'old']],
+    staged: [['1', 'SHARED', 'sold'], ['2', 'SHARED', 'sold'], ['3', 'NEW', 'stock']],
+  }, async (snapshot, { client, statements }) => {
+    const before = (await client.query('SELECT ctid::text FROM ventas_raw WHERE id=2')).rows[0].ctid;
+    const result = await publishTableSnapshotDiff(snapshot, { keyColumns: ['id'], sampleLimit: 0 });
+    assert.deepEqual(result.applied, { added: 1, removed: 1, modified: 1 });
+    assert.equal(result.verified, true);
+    assert.deepEqual(result.comparison.differences, { added: [], removed: [], modified: [] });
+    assert.equal((await client.query('SELECT ctid::text FROM ventas_raw WHERE id=2')).rows[0].ctid, before);
+    assert.deepEqual((await client.query('SELECT * FROM ventas_raw ORDER BY id')).rows, [
+      { id: 1, vin: 'SHARED', state: 'sold', lifecycle: 'keep-updated' },
+      { id: 2, vin: 'SHARED', state: 'sold', lifecycle: 'keep-unchanged' },
+      { id: 3, vin: 'NEW', state: 'stock', lifecycle: 'new-default' },
+    ]);
+    assert.equal((await client.query(`SELECT count(*)::int AS n FROM ${quoteIdent(snapshot.staging)}`)).rows[0].n, 3);
+    assert.ok(statements.some(s => s.startsWith('LOCK TABLE')));
+    assert.ok(!statements.some(s => /^(COMMIT|BEGIN|DROP)\b/.test(s)));
+    const replay = await publishTableSnapshotDiff(snapshot, { keyColumns: ['id'] });
+    assert.deepEqual(replay.applied, { added: 0, removed: 0, modified: 0 });
+  });
+});
+
+sqlTest('unkeyed publication removes only excess duplicate occurrences, preserves NULLs and writes beyond sample limits', async () => {
+  await fixture({ readOnly: false, types: { vin: 'text', state: 'text' },
+    raw: [['DUP', null], ['DUP', null], ['DUP', null], ['KEEP', 'same'], ['OLD', 'stock']],
+    staged: [['DUP', null], ['KEEP', 'same'], ...Array(105).fill(['NEW', 'stock'])],
+  }, async (snapshot, { client }) => {
+    const before = (await client.query("SELECT ctid::text FROM ventas_raw WHERE vin='KEEP'")).rows[0].ctid;
+    const result = await publishTableSnapshotDiff(snapshot, { sampleLimit: 1 });
+    assert.deepEqual(result.applied, { added: 105, removed: 3, modified: 0 });
+    assert.equal(result.comparison.differences.added.length, 1);
+    assert.equal(result.comparison.truncated.added, true);
+    assert.equal((await client.query("SELECT ctid::text FROM ventas_raw WHERE vin='KEEP'")).rows[0].ctid, before);
+    assert.deepEqual((await client.query('SELECT vin,state,count(*)::int AS n FROM ventas_raw GROUP BY vin,state ORDER BY vin')).rows,
+      [{ vin: 'DUP', state: null, n: 1 }, { vin: 'KEEP', state: 'same', n: 1 }, { vin: 'NEW', state: 'stock', n: 105 }]);
+  });
+});
+
+sqlTest('an unreliable VIN key falls back to exact multiset deletion and insertion', async () => {
+  await fixture({ readOnly: false, types: { id: 'integer', vin: 'text', state: 'text' },
+    raw: [[1, 'SHARED', 'old'], [2, 'SHARED', 'same']],
+    staged: [['1', 'SHARED', 'new'], ['2', 'SHARED', 'same']],
+  }, async snapshot => {
+    const result = await publishTableSnapshotDiff(snapshot, { keyColumns: ['vin'] });
+    assert.equal(result.comparison.key.status, 'UNRELIABLE');
+    assert.deepEqual(result.applied, { added: 1, removed: 1, modified: 0 });
+    assert.equal((await compareTableSnapshot(snapshot)).hasChanges, false);
+  });
+});
+
+sqlTest('identical bags execute no INSERT, UPDATE or DELETE and leave every ctid unchanged', async () => {
+  await fixture({ readOnly: false, tableName: 'notas_venta_raw', types: { id: 'integer', state: 'text' },
+    raw: [[1, null], [1, null]], staged: [['1', null], ['01', null]],
+  }, async (snapshot, { client, statements }) => {
+    const before = (await client.query('SELECT ctid::text FROM notas_venta_raw ORDER BY ctid')).rows;
+    const result = await publishTableSnapshotDiff(snapshot);
+    assert.deepEqual(result.applied, { added: 0, removed: 0, modified: 0 });
+    assert.ok(!statements.some(s => /\b(INSERT|UPDATE|DELETE)\b/.test(s)));
+    assert.deepEqual((await client.query('SELECT ctid::text FROM notas_venta_raw ORDER BY ctid')).rows, before);
+  });
+});
+
+sqlTest('a failed UPDATE rolls back preceding DELETEs but preserves earlier caller work and its open transaction', async () => {
+  await fixture({ readOnly: false, types: { id: 'integer PRIMARY KEY', amount: 'integer CHECK (amount > 0)' },
+    raw: [[1, 10], [2, 20]], staged: [['1', '-1']],
+  }, async (snapshot, { client, statements }) => {
+    await client.query('INSERT INTO ventas_raw VALUES (3,30)');
+    await client.query(`INSERT INTO ${quoteIdent(snapshot.staging)} VALUES ('3','30')`);
+    const before = (await client.query('SELECT id,amount,ctid::text FROM ventas_raw ORDER BY id')).rows;
+    await assert.rejects(publishTableSnapshotDiff(snapshot, { keyColumns: ['id'] }), e => e.code === '23514');
+    assert.ok(statements.some(s => s.includes('DELETE FROM')));
+    assert.ok(statements.some(s => s.startsWith('ROLLBACK TO SAVEPOINT')));
+    assert.deepEqual((await client.query('SELECT id,amount,ctid::text FROM ventas_raw ORDER BY id')).rows, before);
+    await client.query('ROLLBACK');
+    assert.deepEqual((await client.query('SELECT id,amount FROM ventas_raw ORDER BY id')).rows, [{ id: 1, amount: 10 }, { id: 2, amount: 20 }]);
+  });
+});
+
+sqlTest('a failed INSERT rolls back earlier deletes in the unkeyed path', async () => {
+  await fixture({ readOnly: false, types: { amount: 'integer CHECK (amount > 0)' }, raw: [[10]], staged: [['-1']] }, async (snapshot, { client }) => {
+    await assert.rejects(publishTableSnapshotDiff(snapshot), e => e.code === '23514');
+    assert.deepEqual((await client.query('SELECT * FROM ventas_raw')).rows, [{ amount: 10 }]);
+  });
+});
+
+sqlTest('publication rejects empty staging and calls outside a transaction before writing rows', async () => {
+  await fixture({ readOnly: false, types: { id: 'integer' }, raw: [[1]] }, async (snapshot, { client, statements }) => {
+    await assert.rejects(publishTableSnapshotDiff(snapshot), /Empty SALES snapshot blocked/);
+    assert.ok(!statements.some(s => /\b(INSERT|UPDATE|DELETE)\b/.test(s)));
+    await client.query('ROLLBACK');
+    await assert.rejects(publishTableSnapshotDiff(snapshot), e => e.code === '25P01');
+    assert.deepEqual((await client.query('SELECT * FROM ventas_raw')).rows, [{ id: 1 }]);
+  });
+});
+
+sqlTest('post-publication parity checks roll back trigger changes even when affected counts match', async () => {
+  await fixture({ readOnly: false, types: { id: 'integer', amount: 'integer' },
+    raw: [[1, 10]], staged: [['1', '20']],
+    setup: async client => {
+      await client.query(`CREATE FUNCTION pg_temp.change_amount() RETURNS trigger LANGUAGE plpgsql AS
+        $$ BEGIN NEW.amount := NEW.amount + 1; RETURN NEW; END $$`);
+      await client.query('CREATE TRIGGER change_amount BEFORE UPDATE ON ventas_raw FOR EACH ROW EXECUTE FUNCTION pg_temp.change_amount()');
+    },
+  }, async (snapshot, { client }) => {
+    await assert.rejects(publishTableSnapshotDiff(snapshot, { keyColumns: ['id'] }), /parity failed/);
+    assert.deepEqual((await client.query('SELECT * FROM ventas_raw')).rows, [{ id: 1, amount: 10 }]);
   });
 });
 
