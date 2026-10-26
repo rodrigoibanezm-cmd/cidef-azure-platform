@@ -1,13 +1,6 @@
-name: Publish isolated Azure sales loader
+name: Publish SALES image manually
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/loaders/ventas-raw.js'
-      - 'Dockerfile.sales-loader'
-      - 'package.json'
-      - '.github/workflows/publish-sales-loader.yml'
   workflow_dispatch:
 
 permissions:
@@ -16,11 +9,26 @@ permissions:
 
 jobs:
   publish:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/staging' }}
     runs-on: ubuntu-latest
     environment: Production
     steps:
       - uses: actions/checkout@v4
-      - name: Azure login via OIDC
+        with:
+          ref: 8636778b5c9983161e8b3b92b8ce5080ce765fd0
+          persist-credentials: false
+      - name: Validate existing Azure credentials
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_CLIENT_ID" || { echo "::error::Missing AZURE_CLIENT_ID"; exit 1; }
+          test -n "$AZURE_TENANT_ID" || { echo "::error::Missing AZURE_TENANT_ID"; exit 1; }
+          test -n "$AZURE_SUBSCRIPTION_ID" || { echo "::error::Missing AZURE_SUBSCRIPTION_ID"; exit 1; }
+      - name: Azure login via existing OIDC
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -28,11 +36,13 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: ACR login
         run: az acr login --name cidefprodacr
-      - name: Build and publish isolated image
+      - name: Build, syntax-check and publish SALES image
+        shell: bash
+        env:
+          IMAGE: cidefprodacr.azurecr.io/cidef-data-loader:sales-8636778
         run: |
           set -euo pipefail
-          IMAGE="cidefprodacr.azurecr.io/cidef-azure-sales-validation:${GITHUB_SHA}"
           docker build --file Dockerfile.sales-loader --tag "$IMAGE" .
-          docker run --rm --entrypoint node "$IMAGE" --check src/loaders/ventas-raw.js
+          docker run --rm --entrypoint node "$IMAGE" --check scripts/refresh-sales-sources-azure.js
           docker push "$IMAGE"
           echo "Published $IMAGE"
