@@ -1,7 +1,8 @@
 // Adapted from cidef-data-loader; only Azure I/O changes.
 import { findDailyXlsx, downloadBlobObject, blobSource } from './source-io.js';
 import { parseSheet } from './xlsx.js';
-import { replaceTableSnapshot } from './db.js';
+import { queryDb, quoteIdent, replaceTableSnapshot, beginTableSnapshot, appendTableRows,
+  publishTableSnapshotDiff } from './db.js';
 
 const FILE_PREFIX = 'ventas/Listado_Notas_de_Venta_';
 const SHEET_NAME = 'Hoja1';
@@ -43,7 +44,10 @@ const KEEP_COLUMNS = [
   'comentario',
 ];
 
-export async function run() {
+// The caller's existing daily transaction owns commit/rollback and staging
+// cleanup on failure. Incremental publication requires an explicit boolean.
+export async function run({ incremental = false } = {}) {
+  if (typeof incremental !== 'boolean') throw new Error('incremental must be a boolean');
   const startedAt = Date.now();
   const file = await findDailyXlsx(FILE_PREFIX);
   const buffer = await downloadBlobObject(file.Key);
@@ -56,13 +60,25 @@ export async function run() {
   const brandIndex = indexByColumn.get('desc_mae_marca');
   const filtered = parsed.rows.filter((row) => ALLOWED_BRANDS.has(String(row[brandIndex] ?? '').trim().toUpperCase()));
   const rows = filtered.map((row) => KEEP_COLUMNS.map((column) => row[indexByColumn.get(column)]));
-  const result = await replaceTableSnapshot(TABLE_NAME, KEEP_COLUMNS, rows);
+  let result, differentialPublication;
+  if (incremental) {
+    if (!rows.length) throw new Error('Empty SALES snapshot blocked: ' + TABLE_NAME);
+    const snapshot = await beginTableSnapshot(TABLE_NAME, KEEP_COLUMNS);
+    result = await appendTableRows(snapshot, rows);
+    // No certified stable key: neither VIN nor note number implies uniqueness.
+    // The shared publisher preserves duplicate occurrences using full-row diffs.
+    differentialPublication = await publishTableSnapshotDiff(snapshot);
+    await queryDb('DROP TABLE ' + quoteIdent(snapshot.staging));
+  } else {
+    result = await replaceTableSnapshot(TABLE_NAME, KEEP_COLUMNS, rows);
+  }
 
   return {
     source: blobSource(file),
     sheet: SHEET_NAME,
     table: TABLE_NAME,
-    strategy: 'FULL_SNAPSHOT_REPLACE',
+    strategy: incremental ? 'INCREMENTAL_SNAPSHOT_DIFF' : 'FULL_SNAPSHOT_REPLACE',
+    ...(incremental ? { differentialPublication } : {}),
     rowsLoaded: parsed.rows.length,
     rowsExcludedByBrand: parsed.rows.length - rows.length,
     rowsFinal: rows.length,
