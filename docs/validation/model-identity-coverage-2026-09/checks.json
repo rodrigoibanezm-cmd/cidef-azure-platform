@@ -1,0 +1,59 @@
+{
+  "environment": "LOCAL_NODE_24.22.1_NOT_GITHUB_ACTIONS",
+  "tests": {
+    "passed": 75,
+    "failed": 0
+  },
+  "regression": {
+    "STORE": {
+      "members": 14,
+      "all_results_identical": true
+    },
+    "SELLER": {
+      "members": 218,
+      "all_result_sha256_identical": true
+    },
+    "DEALER_GROUP": {
+      "members": 18,
+      "all_results_identical": true
+    }
+  },
+  "p1_original_objects_verified_against_same_run_p3": 70,
+  "p1_months": 69,
+  "p1_missing_months": [],
+  "journal": {
+    "success": 73,
+    "failed": 1,
+    "failed_period_recovered": "2025-09"
+  },
+  "prior_p1_payload_changes": [
+    {
+      "period": "2026-09",
+      "model_id": "765",
+      "previous": 172,
+      "current": 171
+    }
+  ],
+  "history_truncated": false,
+  "allocated_unresolved_sales": false,
+  "protected_source_sha256": {
+    "lib/p2/closed-performance/classify.js": "3fb1067aad36524ed9b5f72aebee72f0d1ac0a4b22435cb427364b817cef852d",
+    "lib/p2/units/closed-period-store-performance.js": "f321c75ddbccf0b9739619c813c1d4ac8aadb985632286cfc440ef78f8a21f32",
+    "lib/p2/closed-performance/dealer-series-adapter.js": "62354e6f89497448376a9f9087d216a639a4e137889f6486896dbbed6c23b165",
+    "lib/p2/closed-performance/legacy/deterioration/buildCurrentDeteriorationStatus.js": "15560631ea2d5d4e0b3eb318b16dbdc0e8f8678fd7417317915cd2ce1dc681f3",
+    "lib/p2/closed-performance/legacy/deterioration/deteriorationStatusInput.js": "6b95160914462b394eb760c789c4f1d2ec796d631b31940609eea557bf3a3f16",
+    "lib/p2/closed-performance/legacy/deterioration/orgDeviations.js": "a8f99f5dfb2c99215b0fba4bdaa7b51db3efdf0fb9bd51fe1da90e07ad77c941",
+    "lib/p2/closed-performance/legacy/deterioration/orgPersistence.js": "979efc5f295dca6d966e8004a5606373f88e189c281a2af74cd04a228185969e",
+    "lib/p2/closed-performance/legacy/expectation/expectedCandidates.js": "cf4e7289bcfc8d75593bed8af467050468151016a68605643faacae4e6cc525a",
+    "lib/p2/closed-performance/legacy/expectation/monthSeries.js": "69f79126c5fe72dc08fbb168384daa5dfacac4ccd1e60d6ada39dfc94e63726e"
+  },
+  "classification_counts": {
+    "IMPROVING": 4,
+    "STABLE": 5,
+    "DETERIORATING": 0,
+    "UNKNOWN": 11
+  },
+  "september_reconciled_total": 1033,
+  "deployed": false,
+  "p3_archive_omits_only_llm_temporal_fingerprints": true
+}

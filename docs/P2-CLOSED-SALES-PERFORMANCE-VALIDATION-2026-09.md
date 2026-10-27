@@ -1,5 +1,7 @@
 # Validación de desempeño SALES — septiembre 2026
 
+> Informe histórico de la primera validación. La corrección posterior de cobertura de Modelos y la conciliación P1 actual están en [P2-MODEL-IDENTITY-COVERAGE-2026-09.md](P2-MODEL-IDENTITY-COVERAGE-2026-09.md). Se conservan las cifras/evidencias originales de este informe.
+
 Validación local del 27 de octubre de 2026 sobre P1 Azure. Sin despliegue ni ejecución remota del nuevo helper.
 
 ## Resumen y población
