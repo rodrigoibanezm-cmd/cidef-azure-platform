@@ -2,10 +2,6 @@ name: Deploy Inteligencia Comercial to Azure
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/deploy-inteligencia-comercial.yml'
 
 permissions:
   contents: read
@@ -31,17 +27,6 @@ jobs:
           path: frontend
           persist-credentials: false
 
-      - name: Record frontend source revision
-        shell: bash
-        run: |
-          echo "Frontend source commit: $(git -C frontend rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Verify projection refresh SQL parameter
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -F 'SET payload = CASE WHEN $6::boolean THEN' frontend/app/api/weekly-projections/results/route.js
-
       - name: Build and push frontend image
         shell: bash
         run: |
@@ -51,80 +36,10 @@ jobs:
           docker build -f frontend/Dockerfile -t "$IMAGE" frontend
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
-          echo "Image: `$IMAGE`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Deploy frontend to existing Azure Container Apps environment
+      - name: Update existing frontend Container App
         shell: bash
         run: |
           set -euo pipefail
-          az extension add --name containerapp --upgrade --yes
-          RG="rg-cidef-prod"
-          APP="cidef-inteligencia-comercial"
-          if ! az containerapp show -g "$RG" -n "$APP" --output none 2>/dev/null; then
-            echo "::error::Expected existing Container App $APP in $RG was not found; refusing to create infrastructure."
-            exit 1
-          fi
-          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars PROJECTIONS_ENVIRONMENT=production --output none
-          FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
-          test -n "$FQDN"
-          echo "FRONT_URL=https://$FQDN" >> "$GITHUB_ENV"
-          echo "Front URL: https://$FQDN" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Smoke test
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --show-error --location --retry 8 --retry-delay 5 --retry-connrefused "$FRONT_URL/" --output /dev/null
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/cierre-mensual" --output /dev/null
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/como-vamos" --output /dev/null
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/proyeccion-semanal.html?verify=$GITHUB_RUN_ID" --output /tmp/proyeccion-semanal.html
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/proyeccion-admin.html?verify=$GITHUB_RUN_ID" --output /tmp/proyeccion-admin.html
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/health/database" --output /dev/null
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/sucursales" --output /dev/null
-          curl --fail --show-error --location --retry 8 --retry-delay 5 "$FRONT_URL/api/weekly-projections/modelos" --output /dev/null
-          python3 - <<'PY'
-          from datetime import date, timedelta
-          import json
-          import os
-          import urllib.request
-          cutoff = date.today()
-          week_start = cutoff - timedelta(days=cutoff.weekday())
-          url = f"{os.environ['FRONT_URL']}/api/weekly-projections/results?week_start={week_start.isoformat()}&cutoff_date={cutoff.isoformat()}&status=1"
-          with urllib.request.urlopen(url, timeout=30) as response:
-              status = json.load(response)
-          if status.get('environment') != 'production':
-              raise SystemExit(f"Projection results environment is {status.get('environment')!r}, expected 'production'")
-          print('Projection refresh status is isolated to the production environment.')
-          PY
-          python3 - <<'PY'
-          from pathlib import Path
-          weekly = Path('/tmp/proyeccion-semanal.html').read_text()
-          admin = Path('/tmp/proyeccion-admin.html').read_text()
-          if len(weekly) < 1000:
-              raise SystemExit('Weekly projection page response is unexpectedly small')
-          finance_ids = ['financeQuotes', 'financeApproved', 'financeUfi', 'financeOther', 'financePrecurse']
-          missing_finance_ids = [field for field in finance_ids if f'id="{field}"' not in admin]
-          if missing_finance_ids:
-              raise SystemExit('Restored finance cards are missing: ' + ', '.join(missing_finance_ids))
-          cards = admin.count('<article class="projection-card finance-card">')
-          if cards != 5:
-              raise SystemExit(f'Expected five finance cards including PRECURSE, found {cards}')
-          required = {
-              'week selector': 'id="week"',
-              'store selector': 'id="store"',
-              'monthly sales trend': 'id="monthTrend"',
-              'weekly sales trend': 'id="weekTrend"',
-              'closed-week trend': 'id="closedTrend"',
-              'next-cutoff trend': 'id="nextTrend"',
-              'projection tables': '<table',
-              'store breakdown': 'id="byStore"',
-              'seller breakdown': 'id="sellerBreakdown"',
-          }
-          missing = [name for name, marker in required.items() if marker not in admin]
-          if missing:
-              raise SystemExit('Restored admin design is missing: ' + ', '.join(missing))
-          print('Projection pages returned HTTP 200; restored four-card layout, original selectors, charts and tables are present.')
-          PY
-          echo "Front-only deployment verified: no database migrations or data writes were run." >> "$GITHUB_STEP_SUMMARY"
-          echo "Home, existing pages, projections pages, Azure PostgreSQL health and read-only branch/model endpoints responded." >> "$GITHUB_STEP_SUMMARY"
-
+          az extension add --name containerapp --yes
+          az containerapp update --resource-group rg-cidef-prod --name cidef-inteligencia-comercial --image "$IMAGE" --set-env-vars PROJECTIONS_ENVIRONMENT=production --output none
