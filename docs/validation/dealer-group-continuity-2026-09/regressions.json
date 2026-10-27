@@ -1,0 +1,43 @@
+{
+  "validation": "EXACT_FROZEN_P1_REPLAY",
+  "local_tests_passed": 62,
+  "dimensions": {
+    "STORE": {
+      "matched_members": 14,
+      "state_counts": {
+        "IMPROVING": 1,
+        "STABLE": 9,
+        "DETERIORATING": 0,
+        "UNKNOWN": 4
+      },
+      "result_hashes_match": true
+    },
+    "SELLER": {
+      "matched_members": 218,
+      "state_counts": {
+        "IMPROVING": 4,
+        "STABLE": 12,
+        "DETERIORATING": 0,
+        "UNKNOWN": 202
+      },
+      "result_hashes_match": true
+    },
+    "MODEL": {
+      "matched_members": 41,
+      "state_counts": {
+        "IMPROVING": 0,
+        "STABLE": 0,
+        "DETERIORATING": 0,
+        "UNKNOWN": 41
+      },
+      "result_hashes_match": true
+    }
+  },
+  "existing_code_sha256": {
+    "lib/p2/closed-performance/classify.js": "3fb1067aad36524ed9b5f72aebee72f0d1ac0a4b22435cb427364b817cef852d",
+    "lib/p2/closed-performance/sales-dimensions.js": "72bb344d3b97f15452837cda8771c4969093af681ec5ab48e715a98a102aff52",
+    "lib/p2/closed-performance/sales-dataset-adapter.js": "768c062d390a6165a8fc0e52042b801c4919464c560d69c24b62b5f6046f48ea",
+    "lib/p2/units/closed-period-sales-performance.js": "cf5b930ca1ebfb7623fe0ce484e6a206ed32540acca0bfbcd91356e91be01dc2",
+    "lib/p2/registry.js": "38b4e88811f454d6af06ae1482343b1e510b825cb6df853834d497d926711553"
+  }
+}
