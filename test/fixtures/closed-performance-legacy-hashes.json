@@ -1,0 +1,12 @@
+{
+  "repository": "rodrigoibanezm-cmd/cidef-data-loader",
+  "commit": "16f01f381238bc058c3e25e88dca7b550aa487f7",
+  "files": {
+    "deterioration/buildCurrentDeteriorationStatus.js": "9253644acd2490af670452aa5f833bbddde1273d",
+    "expectation/monthSeries.js": "c39c539aec93b866ce0b90834e3ca203cc896bb2",
+    "deterioration/deteriorationStatusInput.js": "79b1fcca64104d1b0ef9a6c951d153f26a43ba7e",
+    "deterioration/orgDeviations.js": "d35b6e98a4fe9637ed7aa6bc00e9ddac640fe0ef",
+    "deterioration/orgPersistence.js": "d2989166f3d5d6e6b810f636f7c47d0842e702ba",
+    "expectation/expectedCandidates.js": "26f1014d6a353c46e3631bc2c364af9107f73d9c"
+  }
+}

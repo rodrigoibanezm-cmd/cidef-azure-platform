@@ -1,6 +1,6 @@
 # Helper P2 de desempeño cerrado: bloqueo metodológico
 
-Estado: PROPUESTA PENDIENTE DE APROBACIÓN. No implementado ni registrado en P2.
+Estado histórico de d866e51: propuesta que estaba pendiente. El usuario aprobó explícitamente la regla espejo el 26 de octubre de 2026. La implementación y el contrato vigentes se documentan en [P2-CLOSED-STORE-PERFORMANCE.md](P2-CLOSED-STORE-PERFORMANCE.md). Las secciones siguientes conservan el diagnóstico previo a esa aprobación.
 
 Fecha de revisión: 26 de octubre de 2026.
 Alcance inicial solicitado: SALES / OWN_STORES / STORE / septiembre de 2026.
