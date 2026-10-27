@@ -1,0 +1,77 @@
+# P2: extensión de desempeño cerrado a SALES
+
+Estado: adaptadores SELLER y MODEL implementados, sin despliegue. DEALER_GROUP bloqueado por contrato P1 de identidad. Tiendas y todos los motores existentes permanecen intactos.
+
+## Contrato y ámbito
+
+Unidad complementaria: `p2.closed_period_sales_performance@0.1.0`.
+
+| Dimensión | Universo fijo | Identidad P1 | Entrada |
+| --- | --- | --- | --- |
+| SELLER | OWN_STORES | personas_master@0.1 | Datasets mensuales SELLER originales |
+| MODEL | COMPANY | modelos_master_v01@0.1 | Datasets mensuales MODEL originales |
+| STORE | OWN_STORES | sucursales_master@0.1 | Conserva p2.closed_period_store_performance@0.1.0; no se cambia |
+| DEALER_GROUP | DEALERS | No hay contrato dimensional P1 publicado de identidad/grupos | Bloqueado; no se transforma FETCH ni filtros escalares en evidencia dimensional |
+
+Parámetros obligatorios: `cutoff_month` (mes cerrado), `dimension` (SELLER o MODEL) y `member_id` canónico. No admite umbrales, ventanas, universos alternativos, agrupación por nombre ni meses abiertos.
+
+Cada slot `history_YYYY_MM` contiene el evidence_id original de un dataset mensual `p1.dimensional_quantitative_dataset@0.1.0`, P1_CERTIFIED/CERTIFIED, SALES VIN_SALES, con corte de fin de mes. Se exige evidencia desde 2021-01 hasta el mes solicitado, como en c3ee707. Se reutiliza cada dataset para todos los miembros. El MCP y P3 existentes resuelven/journalizan esos refs después de un despliegue autorizado; no se modifica su transporte.
+
+## Reutilización exacta
+
+La unidad nueva importa `classifyClosedPerformance` de c3ee707. No modifica ni copia el clasificador, el helper de Tiendas, la referencia MA12, las desviaciones, los percentiles ni la persistencia.
+
+Se conservan IMPROVING, STABLE, DETERIORATING y UNKNOWN, su precedencia, percentil 0,5, tres errores anteriores para el percentil y dos observaciones consecutivas evaluables para confirmar/descartar mejora. Se conserva la versión de política histórica `CLOSED_STORE_PERFORMANCE_MIRROR_V01`: su nombre no convierte las evidencias SELLER/MODEL en STORE.
+
+Los nombres de argumentos internos storeId/storeLabel se mantienen por compatibilidad del núcleo; reciben el ID/etiqueta del miembro, sin alterar dimensión, universo, payload o autoridad P1. No hay renombrado de evidencias, cálculos comerciales fuera del helper ni motor estadístico duplicado.
+
+## Identidad, continuidad y suficiencia
+
+Los IDs canónicos y el contrato/versión de identidad deben conservarse en toda la historia. Cambios de versión o evidencia mezclada se rechazan. Dos IDs con el mismo nombre permanecen separados; un nombre que cambia con el mismo ID no rompe su continuidad. No se cosen IDs antiguos/nuevos ni se infiere relación laboral por presencia de ventas. Un ID numérico nunca observado en P1 devuelve UNKNOWN/P1_MEMBER_IDENTITY_UNCONFIRMED y no se declara canónico.
+
+La clasificación requiere cobertura P1 mensual completa y conciliación de valores y cobertura de identidad. Si falta un dataset, devuelve UNKNOWN/P1_HISTORY_COVERAGE_INCOMPLETE. Si hay ventas con identidad UNRESOLVED en algún mes, devuelve UNKNOWN/P1_IDENTITY_COVERAGE_INCOMPLETE y los períodos/refs afectados: no se asigna ese residual a miembros conocidos ni se recorta el inicio histórico para obtener una clasificación. Es una condición de suficiencia de evidencia, no un umbral estadístico nuevo; Tiendas ya rechaza historia con identidades sin resolver.
+
+Con la evidencia íntegra y resuelta, los huecos de observación de un miembro se pasan al mismo núcleo disperso existente: impiden referencias completas y rompen episodios; los errores disponibles se conservan según la regla original.
+
+## Cero frente a ausencia
+
+| Evidencia | Valor conservado | observation_state |
+| --- | --- | --- |
+| Miembro con ventas positivas | Cantidad P1 | OBSERVED_POSITIVE |
+| Miembro explícito con ventas cero | 0 | ZERO_SALES_ACTIVITY_UNVERIFIED |
+| Dataset presente, miembro no observado | null | NOT_OBSERVED |
+| No hay dataset P1 del mes | null | NO_P1_DATASET |
+
+El cero de ventas no se convierte en ausencia ni la ausencia en cero. Sin embargo, los contratos dimensionales existentes no publican evidencia independiente de actividad para acreditar ACTIVE_ZERO. Por ello los ceros sin esa prueba siguen excluidos del índice estadístico, exactamente como en c3ee707. Si falta suficiencia, se devuelve UNKNOWN. La extensión no inventa ceros activos ni cambia esa regla.
+
+## Dealers: bloqueo preciso
+
+P1 SALES@0.13 publica `dealer_group_id` como campo/filtro, pero no como dimensión con contrato de identidad/versión, catálogo de grupos ni cobertura de membresía histórica. El contrato dimensional publicado admite MODEL, STORE, SELLER, FINANCIAL_ENTITY y NETWORK; tampoco el grouping interno añade DEALER_GROUP.
+
+FETCH de septiembre sí devuelve IDs de grupos asociados a ventas reconocidas; no se afirma que esos datos no existan. Las observaciones escalares/series filtradas permiten medir una selección de IDs, pero no suministran el contrato dimensional de identidad y continuidad requerido para este adaptador. FETCH no tiene el evidence_id/contrato dimensional que resuelve P2. No se le añade artificialmente autoridad, versión, dimensión ni etiquetas.
+
+Alternativa mínima pendiente: publicar desde P1 una evidencia de grupos que reutilice la agrupación canónica existente y declare su identidad, versión, membresía/semántica histórica, cobertura y período/corte. No requiere tablas nuevas. Este encargo no modifica P1 ni registra una unidad funcional para dealers.
+
+## Salida, validación y trazabilidad
+
+La salida conserva valor P1 incluso con estado UNKNOWN, período/corte, dimensión/ID/etiqueta, contrato de identidad, política, estado original, episodio de mejora, filas estadísticas, suficiencia, referencias originales y distinción entre ceros y falta de observación.
+
+El validador de septiembre usa la unión de IDs canónicos observados en la historia P1 2021-01–2026-09 para SELLER/MODEL; no es una nómina de activos. Informa por separado los miembros observados en septiembre, los que no tienen observación actual y los cuatro estados. Tiendas conserva su población original de 14 miembros y sus mismos resultados.
+
+La ejecución de P2 es local sobre evidencia original Azure; no es una ejecución remota de la nueva unidad ni un evento P2 publicado en P3 productivo. El journal P1 original, execution_id local, parámetros, refs y hashes permiten reproducirla.
+
+Los temporal_fingerprint adicionales tienen delivery.p2_input=false y no se utilizan ni se convierten en historia certificada de entrada. Los archivos de entrada conservan íntegro el envelope P1 utilizado, omitiendo únicamente ese contexto adicional dirigido al LLM.
+
+Pruebas:
+
+```bash
+node --test test/p2-closed-period-sales-performance.test.js test/p2-closed-period-store-performance.test.js test/p2-open-period-deterioration-risk.test.js test/p2-vertical-slice.test.js test/p2-target-attainment-seller-contribution.test.js
+```
+
+Reproducción (no consulta fuentes, escribe los informes locales del directorio indicado):
+
+```bash
+node scripts/validate-closed-sales-performance.js docs/validation/closed-sales-performance-2026-09
+```
+
+Resultados y pendientes: [validación de septiembre](P2-CLOSED-SALES-PERFORMANCE-VALIDATION-2026-09.md). Sin frontend, FORUM, RVM, infraestructura, tablas, staging ni despliegue.
