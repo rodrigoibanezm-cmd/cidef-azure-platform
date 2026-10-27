@@ -30,7 +30,7 @@ const run=(evidence=fixture(),dimension='SELLER',member_id='3',extra={})=>execut
 });
 test('new contract admits only supported SALES identities and fixed rules',()=>{
   const c=describeP2Unit(unit_id);
-  assert.deepEqual(c.deterministic_contract.parameters.dimension.allowed,['SELLER','MODEL']);
+  assert.deepEqual(c.deterministic_contract.parameters.dimension.allowed,['SELLER','MODEL','DEALER_GROUP']);
   assert.equal(describeP2Unit('p2.closed_period_store_performance').contract_version,'0.1.0');
 });
 for(const dimension of ['SELLER','MODEL']){
@@ -128,7 +128,7 @@ test('rejects uncertified, wrong dimension/universe/identity, partial month and 
   assert.equal((await run(fixture(),'SELLER','3',{threshold:.7})).status,'INVALID_EXECUTION');
   assert.equal((await run(fixture(),'SELLER','3',{cutoff_month:'2099-01'})).status,'INVALID_EXECUTION');
 });
-test('does not accept dealer filters, FETCH objects, temporal fingerprints or relabelled STORE evidence',async()=>{
+test('does not accept dimensional evidence recast as dealer series, FETCH objects, temporal fingerprints or relabelled STORE evidence',async()=>{
   assert.equal((await run(fixture(),'DEALER_GROUP')).status,'INVALID_EXECUTION');
   for(const id of ['constructor','__proto__','toString',['SELLER'],null])assert.equal((await run({},id)).status,'INVALID_EXECUTION');
   assert.equal((await run({history_2026_09:{operation:'FETCH',source:'SALES',rows:[]}})).status,'INVALID_EXECUTION');

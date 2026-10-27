@@ -1,6 +1,6 @@
 # P2: extensión de desempeño cerrado a SALES
 
-Estado: adaptadores SELLER y MODEL implementados, sin despliegue. DEALER_GROUP bloqueado por contrato P1 de identidad. Tiendas y todos los motores existentes permanecen intactos.
+Estado: adaptadores SELLER y MODEL implementados, sin despliegue. Se incorpora DEALER_GROUP mediante series P1 filtradas y agrupación comercial actual, por autorización explícita del encargo posterior; no se habilita una dimensión P1 ni se certifica membresía histórica as-of. Véase [contrato Dealers](P2-CLOSED-DEALER-PERFORMANCE.md). El bloqueo dimensional histórico descrito abajo se conserva como contexto de aquel alcance, no como impedimento para esta entrada de series. Tiendas y las reglas estadísticas existentes permanecen intactas.
 
 ## Contrato y ámbito
 
@@ -11,11 +11,11 @@ Unidad complementaria: `p2.closed_period_sales_performance@0.1.0`.
 | SELLER | OWN_STORES | personas_master@0.1 | Datasets mensuales SELLER originales |
 | MODEL | COMPANY | modelos_master_v01@0.1 | Datasets mensuales MODEL originales |
 | STORE | OWN_STORES | sucursales_master@0.1 | Conserva p2.closed_period_store_performance@0.1.0; no se cambia |
-| DEALER_GROUP | DEALERS | No hay contrato dimensional P1 publicado de identidad/grupos | Bloqueado; no se transforma FETCH ni filtros escalares en evidencia dimensional |
+| DEALER_GROUP | DEALERS | dealer_group_id como filtro P1; agrupación actual, sin certificar membresía as-of | Series P1 originales filtradas; ver contrato Dealers |
 
-Parámetros obligatorios: `cutoff_month` (mes cerrado), `dimension` (SELLER o MODEL) y `member_id` canónico. No admite umbrales, ventanas, universos alternativos, agrupación por nombre ni meses abiertos.
+Parámetros obligatorios: `cutoff_month` (mes cerrado), `dimension` (SELLER, MODEL o DEALER_GROUP) y `member_id` canónico o ID de grupo actual según el caso. No admite umbrales, ventanas, universos alternativos, agrupación por nombre ni meses abiertos.
 
-Cada slot `history_YYYY_MM` contiene el evidence_id original de un dataset mensual `p1.dimensional_quantitative_dataset@0.1.0`, P1_CERTIFIED/CERTIFIED, SALES VIN_SALES, con corte de fin de mes. Se exige evidencia desde 2021-01 hasta el mes solicitado, como en c3ee707. Se reutiliza cada dataset para todos los miembros. El MCP y P3 existentes resuelven/journalizan esos refs después de un despliegue autorizado; no se modifica su transporte.
+**SELLER/MODEL:** cada slot `history_YYYY_MM` contiene el evidence_id original de un dataset mensual `p1.dimensional_quantitative_dataset@0.1.0`, P1_CERTIFIED/CERTIFIED, SALES VIN_SALES, con corte de fin de mes. Se exige evidencia desde 2021-01 hasta el mes solicitado, como en c3ee707. Se reutiliza cada dataset para todos los miembros. El MCP y P3 existentes resuelven/journalizan esos refs después de un despliegue autorizado; no se modifica su transporte.
 
 ## Reutilización exacta
 
@@ -25,7 +25,7 @@ Se conservan IMPROVING, STABLE, DETERIORATING y UNKNOWN, su precedencia, percent
 
 Los nombres de argumentos internos storeId/storeLabel se mantienen por compatibilidad del núcleo; reciben el ID/etiqueta del miembro, sin alterar dimensión, universo, payload o autoridad P1. No hay renombrado de evidencias, cálculos comerciales fuera del helper ni motor estadístico duplicado.
 
-## Identidad, continuidad y suficiencia
+## Identidad, continuidad y suficiencia (SELLER/MODEL)
 
 Los IDs canónicos y el contrato/versión de identidad deben conservarse en toda la historia. Cambios de versión o evidencia mezclada se rechazan. Dos IDs con el mismo nombre permanecen separados; un nombre que cambia con el mismo ID no rompe su continuidad. No se cosen IDs antiguos/nuevos ni se infiere relación laboral por presencia de ventas. Un ID numérico nunca observado en P1 devuelve UNKNOWN/P1_MEMBER_IDENTITY_UNCONFIRMED y no se declara canónico.
 
@@ -33,7 +33,7 @@ La clasificación requiere cobertura P1 mensual completa y conciliación de valo
 
 Con la evidencia íntegra y resuelta, los huecos de observación de un miembro se pasan al mismo núcleo disperso existente: impiden referencias completas y rompen episodios; los errores disponibles se conservan según la regla original.
 
-## Cero frente a ausencia
+## Cero frente a ausencia (SELLER/MODEL; Dealers en su contrato complementario)
 
 | Evidencia | Valor conservado | observation_state |
 | --- | --- | --- |
@@ -44,13 +44,13 @@ Con la evidencia íntegra y resuelta, los huecos de observación de un miembro s
 
 El cero de ventas no se convierte en ausencia ni la ausencia en cero. Sin embargo, los contratos dimensionales existentes no publican evidencia independiente de actividad para acreditar ACTIVE_ZERO. Por ello los ceros sin esa prueba siguen excluidos del índice estadístico, exactamente como en c3ee707. Si falta suficiencia, se devuelve UNKNOWN. La extensión no inventa ceros activos ni cambia esa regla.
 
-## Dealers: bloqueo preciso
+## Dealers: distinción entre identidad dimensional histórica y agrupación actual
 
 P1 SALES@0.13 publica `dealer_group_id` como campo/filtro, pero no como dimensión con contrato de identidad/versión, catálogo de grupos ni cobertura de membresía histórica. El contrato dimensional publicado admite MODEL, STORE, SELLER, FINANCIAL_ENTITY y NETWORK; tampoco el grouping interno añade DEALER_GROUP.
 
 FETCH de septiembre sí devuelve IDs de grupos asociados a ventas reconocidas; no se afirma que esos datos no existan. Las observaciones escalares/series filtradas permiten medir una selección de IDs, pero no suministran el contrato dimensional de identidad y continuidad requerido para este adaptador. FETCH no tiene el evidence_id/contrato dimensional que resuelve P2. No se le añade artificialmente autoridad, versión, dimensión ni etiquetas.
 
-Alternativa mínima pendiente: publicar desde P1 una evidencia de grupos que reutilice la agrupación canónica existente y declare su identidad, versión, membresía/semántica histórica, cobertura y período/corte. No requiere tablas nuevas. Este encargo no modifica P1 ni registra una unidad funcional para dealers.
+El encargo posterior autoriza explícitamente usar la agrupación actual, igual que el publicador. Esa entrada ya se implementa como series P1 filtradas dentro del mismo helper, sin fabricar un dataset dimensional ni modificar P1. Véase P2-CLOSED-DEALER-PERFORMANCE.md. La eventual certificación de membresía histórica as-of sigue siendo un alcance distinto, no requerido para esa clasificación.
 
 ## Salida, validación y trazabilidad
 
