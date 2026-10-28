@@ -1,0 +1,32 @@
+name: Publish Forum image manually
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: ACR login
+        run: az acr login --name cidefprodacr
+      - name: Build and publish Forum image
+        run: |
+          set -euo pipefail
+          IMAGE="cidefprodacr.azurecr.io/cidef-data-loader:forum-${GITHUB_SHA}"
+          docker build --file Dockerfile.forum-loader --tag "$IMAGE" .
+          docker push "$IMAGE"
+          echo "Published $IMAGE"
