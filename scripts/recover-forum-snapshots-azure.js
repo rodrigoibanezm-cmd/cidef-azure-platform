@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { BlobServiceClient } from '@azure/storage-blob';
 import { getAzurePool, closeAzurePool } from '../lib/azure-postgres.js';
 
 const BATCH_SIZE = 150;
 const COMMON = ['NumOperacion','TipoProceso','FechaCotizacion','Distribuidor','Sucursal','Vendedor','Ejecutivo','ModeloVehiculo','VersionVehiculo','ValorVehiculo','Promocion','PlazoCredito','NumContrato','MontoFinanciado','FechaPagare','FechaPrimeraCuota','UltimoVencimientoNoPagado','FormaPago','Rut','NombreCompleto','Comuna','Ciudad','Region','FechaCancelacion','MotivoCancelacion'];
-const SOURCE_COLUMNS = {
+export const SOURCE_COLUMNS = {
   COTIZACION: COMMON,
   PRECURSE: [...COMMON, 'CantVehiculo', 'FechaPrecurse'],
   CURSE: [...COMMON, 'CantVehiculo', 'FechaCurse'],
@@ -80,21 +82,96 @@ function parseCsv(buffer, type) {
   return rows;
 }
 async function insertRows(client, date, type, filename, rows) {
+  let inserted = 0;
   for (let start = 0; start < rows.length; start += BATCH_SIZE) {
     const values = []; let param = 1;
     const tuples = rows.slice(start, start + BATCH_SIZE).map(row => {
       const record = { snapshot_date: date, source_type: type, ...row, source_file: filename, load_kind: 'DAILY_SNAPSHOT' };
       return `(${TARGET.map(column => { values.push(record[column] ?? null); return `$${param++}`; }).join(',')})`;
     });
-    await client.query(`INSERT INTO public.forum_funnel_raw (${TARGET.join(',')}) VALUES ${tuples.join(',')} ON CONFLICT (snapshot_date,source_type,numero_operacion) DO NOTHING`, values);
+    const result = await client.query(`INSERT INTO public.forum_funnel_raw (${TARGET.join(',')}) VALUES ${tuples.join(',')} ON CONFLICT (snapshot_date,source_type,numero_operacion) DO NOTHING`, values);
+    inserted += result.rowCount;
   }
+  return inserted;
 }
 
-const manifestPath = process.argv[2];
-assert.ok(manifestPath, 'Manifest path is required');
+function validDate(date) {
+  return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)
+    && Number(date.slice(0, 4)) > 0
+    && Number.isFinite(Date.parse(date + 'T00:00:00Z'))
+    && new Date(date + 'T00:00:00Z').toISOString().slice(0, 10) === date;
+}
+
+function requireAzure() {
+  const url = process.env.AZURE_DATABASE_URL;
+  assert.ok(url && /^postgres(?:ql)?:$/.test(new URL(url).protocol)
+    && new URL(url).hostname.endsWith('.postgres.database.azure.com'), 'AZURE_DATABASE_URL must point to PostgreSQL Azure');
+}
+
+export async function loadForumDay({ date, container, pool } = {}) {
+  assert.ok(validDate(date), 'A valid YYYY-MM-DD Forum date is required');
+  if (!container) {
+    const connection = process.env.AZURE_STORAGE_CONNECTION_STRING;
+    assert.ok(connection, 'AZURE_STORAGE_CONNECTION_STRING is required');
+    const service = BlobServiceClient.fromConnectionString(connection);
+    assert.ok(service.url.startsWith('https://') && new URL(service.url).hostname.endsWith('.blob.core.windows.net'), 'Azure Blob HTTPS endpoint is required');
+    container = service.getContainerClient(process.env.AZURE_CONTAINER || 'cidef');
+  }
+  const objects = [];
+  for await (const blob of container.listBlobsFlat({ prefix: 'Forum/' })) objects.push(blob.name);
+  const prefixes = { COTIZACION: 'Cotizacion', PRECURSE: 'Precurse', CURSE: 'Curse' };
+  const sources = [];
+  for (const [type, prefix] of Object.entries(prefixes)) {
+    const filename = `${prefix}_Cidef_${date.replaceAll('-', '')}.csv`;
+    const matches = objects.filter(name => path.posix.basename(name) === filename);
+    assert.equal(matches.length, 1, `Expected exactly one ${type} CSV for ${date}`);
+    const key = matches[0], blob = container.getBlobClient(key), properties = await blob.getProperties();
+    assert.ok(properties.etag && properties.contentLength > 0, `Empty or unversioned ${type} CSV`);
+    sources.push({ type, key, blob, etag: properties.etag });
+  }
+  // Parse all three original interfaces before acquiring a database connection.
+  for (const source of sources) {
+    const buffer = await source.blob.downloadToBuffer(undefined, undefined, { conditions: { ifMatch: source.etag } });
+    source.rows = parseCsv(buffer, source.type);
+  }
+  if (!pool) { requireAzure(); pool = getAzurePool(); }
+  const client = await pool.connect();
+  let inserted = 0;
+  try {
+    await client.query('BEGIN');
+    // Also coordinates with writers that do not know this CLI; ordinary reads remain available.
+    await client.query('LOCK TABLE public.forum_funnel_raw IN SHARE ROW EXCLUSIVE MODE');
+    const expected = [];
+    for (const source of sources) {
+      inserted += await insertRows(client, date, source.type, source.key, source.rows);
+      expected.push(...source.rows.map(row => ({ snapshot_date: date, source_type: source.type,
+        ...row, source_file: source.key, load_kind: 'DAILY_SNAPSHOT' })));
+    }
+    // Let PostgreSQL cast original strings exactly as during insertion. Exclude only
+    // ingestion metadata (loaded_at); detect extra keys, multiplicity and changed payloads.
+    const { rows: [validation] } = await client.query(`WITH expected AS (
+      SELECT ${TARGET.join(',')} FROM jsonb_populate_recordset(NULL::public.forum_funnel_raw,$2::jsonb)
+    ), actual AS (
+      SELECT ${TARGET.join(',')} FROM public.forum_funnel_raw WHERE snapshot_date=$1::date
+    ) SELECT count(*)::int AS differences FROM (
+      (TABLE expected EXCEPT ALL TABLE actual) UNION ALL (TABLE actual EXCEPT ALL TABLE expected)
+    ) differences`, [date, JSON.stringify(expected)]);
+    assert.equal(Number(validation.differences), 0, 'Forum snapshot content differs from the three source CSVs');
+    await client.query('COMMIT');
+    return { status: 'COMPLETE', mode: 'DAILY_SNAPSHOT', snapshot_date: date, inserted_rows: inserted,
+      certification: sources.map(source => ({ source_type: source.type, source_file: source.key,
+        source_etag: source.etag, rows: source.rows.length })) };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally { client.release(); }
+}
+
+async function recoverManifest(manifestPath) {
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 assert.ok(Array.isArray(manifest), 'Manifest must be a FORUM snapshot array');
-if (manifest.length === 0) { console.log(JSON.stringify({ status: 'NO_FORUM_SNAPSHOT_FILES_IN_BLOB_MIRROR', files: [] })); process.exit(0); }
+if (manifest.length === 0) return { status: 'NO_FORUM_SNAPSHOT_FILES_IN_BLOB_MIRROR', files: [] };
+requireAzure();
 const certified = [];
 const pool = getAzurePool();
 try {
@@ -134,5 +211,22 @@ try {
     } finally { client.release(); }
     assert.equal(afterCount, rows.length, `Snapshot operation certification failed for ${item.snapshot_date} ${item.source_type}`);
   }
-  console.log(JSON.stringify({ status: 'COMPARED_AND_RECOVERED_FROM_AZURE_BLOB_MIRROR', date_semantics: 'snapshot_date/received_file_date comes from the file date; operation_date_field is parsed from the CSV business event date and is preserved separately', files: certified, recovered_rows: certified.reduce((sum, file) => sum + file.inserted_rows, 0) }));
+  return { status: 'COMPARED_AND_RECOVERED_FROM_AZURE_BLOB_MIRROR', date_semantics: 'snapshot_date/received_file_date comes from the file date; operation_date_field is parsed from the CSV business event date and is preserved separately', files: certified, recovered_rows: certified.reduce((sum, file) => sum + file.inserted_rows, 0) };
 } finally { await closeAzurePool(); }
+}
+
+export async function main(argv = process.argv.slice(2)) {
+  const daily = argv.length === 2 && argv[0] === '--date';
+  assert.ok(daily || argv.length === 1 && !argv[0].startsWith('-'), 'Use --date YYYY-MM-DD or a local recovery manifest');
+  if (daily) assert.ok(validDate(argv[1]), 'A valid YYYY-MM-DD Forum date is required');
+  if (daily) requireAzure();
+  try { return daily ? await loadForumDay({ date: argv[1] }) : await recoverManifest(argv[0]); }
+  finally { await closeAzurePool(); }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().then(result => console.log(JSON.stringify(result))).catch(error => {
+    console.error(JSON.stringify({ status: 'FAILED', code: error.code || error.name }));
+    process.exitCode = 1;
+  });
+}
