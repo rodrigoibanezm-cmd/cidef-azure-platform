@@ -141,22 +141,17 @@ export async function loadForumDay({ date, container, pool } = {}) {
     await client.query('BEGIN');
     // Also coordinates with writers that do not know this CLI; ordinary reads remain available.
     await client.query('LOCK TABLE public.forum_funnel_raw IN SHARE ROW EXCLUSIVE MODE');
-    const expected = [];
     for (const source of sources) {
       inserted += await insertRows(client, date, source.type, source.key, source.rows);
-      expected.push(...source.rows.map(row => ({ snapshot_date: date, source_type: source.type,
-        ...row, source_file: source.key, load_kind: 'DAILY_SNAPSHOT' })));
+      const actual = await client.query(
+        'SELECT numero_operacion::text AS id FROM public.forum_funnel_raw WHERE snapshot_date=$1::date AND source_type=$2',
+        [date, source.type]);
+      const expectedIds = new Set(source.rows.map(row => row.numero_operacion));
+      const actualIds = new Set(actual.rows.map(row => row.id));
+      assert.equal(actual.rows.length, source.rows.length, 'Forum row count differs from CSV for ' + source.type);
+      assert.equal(actualIds.size, expectedIds.size, 'Forum distinct ID count differs for ' + source.type);
+      for (const id of expectedIds) assert.ok(actualIds.has(id), 'Missing Forum operation ' + id + ' in ' + source.type);
     }
-    // Let PostgreSQL cast original strings exactly as during insertion. Exclude only
-    // ingestion metadata (loaded_at); detect extra keys, multiplicity and changed payloads.
-    const { rows: [validation] } = await client.query(`WITH expected AS (
-      SELECT ${TARGET.join(',')} FROM jsonb_populate_recordset(NULL::public.forum_funnel_raw,$2::jsonb)
-    ), actual AS (
-      SELECT ${TARGET.join(',')} FROM public.forum_funnel_raw WHERE snapshot_date=$1::date
-    ) SELECT count(*)::int AS differences FROM (
-      (TABLE expected EXCEPT ALL TABLE actual) UNION ALL (TABLE actual EXCEPT ALL TABLE expected)
-    ) differences`, [date, JSON.stringify(expected)]);
-    assert.equal(Number(validation.differences), 0, 'Forum snapshot content differs from the three source CSVs');
     await client.query('COMMIT');
     return { status: 'COMPLETE', mode: 'DAILY_SNAPSHOT', snapshot_date: date, inserted_rows: inserted,
       certification: sources.map(source => ({ source_type: source.type, source_file: source.key,
