@@ -21,8 +21,8 @@ export function describeDealerMovements(history) {
     });
   }
   const last = movements.at(-1);
-  return {movements, recent_direction:last?.to_period==='2026-09'
-    ? last.direction : 'INSUFFICIENT_EVIDENCE',
+  return {movements, recent_direction:last?.direction ?? 'INSUFFICIENT_EVIDENCE',
+    last_movement:last ?? null,
     recent_consecutive_months:(()=>{
       let n=0;
       for(let i=values.length-1;i>=0&&values[i].vin_sales!=null;i--)n++;
@@ -40,7 +40,10 @@ export async function evaluateUnknownDealers({
   for (const row of unknown) {
     const history = await read({dimension:'DEALER_GROUP',member_id:row.member_id,
       brand_id:'',from:'2025-04',to:'2026-09'},{pool});
-    dealers.push({...row,coverage:{observed_months:row.observed_months,
+    const september = history.observations.at(-1);
+    if (september?.period !== '2026-09' || !(september.vin_sales > 0)) continue;
+    dealers.push({...row,dealer_group_id:row.member_id,dealer_group_name:null,
+      september_vin:september.vin_sales,coverage:{observed_months:row.observed_months,
       evaluable_months:row.evaluable_months,missing_months:history.missing_months,
       zero_months:history.zero_months},...describeDealerMovements(history)});
   }
@@ -50,7 +53,18 @@ export async function evaluateUnknownDealers({
     dealers,limitation:'Stored monthly aggregates, not original P1 period series. Descriptive movements only.'};
 }
 if (process.argv[1]?.endsWith('/evaluate-unknown-dealers.js')) {
-  try {console.log(JSON.stringify(await evaluateUnknownDealers(),null,2));}
+  try {
+    const result = await evaluateUnknownDealers();
+    console.table(result.dealers.map(d=>({
+      dealer_group_id:d.dealer_group_id, name:d.dealer_group_name,
+      september_vin:d.september_vin,observed:d.coverage.observed_months,
+      missing:d.coverage.missing_months.length,recent_streak:d.recent_consecutive_months,
+      last_delta_vin:d.last_movement?.absolute_delta??null,
+      last_delta_percent:d.last_movement?.relative_delta==null?null:100*d.last_movement.relative_delta,
+      direction:d.recent_direction,unknown_reason:d.reason,
+    })));
+    console.log(JSON.stringify(result,null,2));
+  }
   catch(error){console.error(error.message);process.exitCode=1;}
   finally {await closeAzurePool();}
 }
