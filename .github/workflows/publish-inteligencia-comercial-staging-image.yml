@@ -1,0 +1,47 @@
+name: Publish Inteligencia Comercial staging image manually
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Checkout frontend staging branch
+        uses: actions/checkout@v4
+        with:
+          repository: rodrigoibanezm-cmd/cidef-inteligencia-comercial
+          ref: staging
+          path: frontend
+          persist-credentials: false
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: ACR login
+        run: az acr login --name cidefprodacr
+      - name: Build and publish staging frontend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRONT_SHA=$(git -C frontend rev-parse HEAD)
+          IMAGE="cidefprodacr.azurecr.io/cidef-inteligencia-comercial-staging:${FRONT_SHA}"
+          docker build --file frontend/Dockerfile --tag "$IMAGE" frontend
+          PUSH_LOG=$(mktemp)
+          trap 'rm -f "$PUSH_LOG"' EXIT
+          docker push "$IMAGE" | tee "$PUSH_LOG"
+          DIGEST=$(sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' "$PUSH_LOG" | tail -n 1)
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          {
+            printf 'Frontend staging SHA: `%s`\n\n' "$FRONT_SHA"
+            printf 'Image: `%s`\n\n' "$IMAGE"
+            printf 'Published digest: `%s`\n\n' "$DIGEST"
+            printf 'Immutable image: `cidefprodacr.azurecr.io/cidef-inteligencia-comercial-staging@%s`\n' "$DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"
