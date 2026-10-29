@@ -12,9 +12,12 @@ const TABLES = Object.freeze({
 export async function evaluateSeptemberSales({
   pool = getAzurePool(), read = readMonthlySalesTrajectory,
   classify = classifyClosedPerformance, progress = () => {},
+  dimensions = Object.keys(TABLES),
 } = {}) {
   const period = '2026-09', from = '2025-04', results = [];
-  for (const [dimension, [table, idColumn, universe]] of Object.entries(TABLES)) {
+  for (const dimension of dimensions) {
+    if (!TABLES[dimension]) throw new Error('UNSUPPORTED_SALES_DIMENSION');
+    const [table, idColumn, universe] = TABLES[dimension];
     const { rows } = await pool.query(
       `SELECT DISTINCT ${idColumn} AS member_id FROM public.${table}
        WHERE period=$1 AND commercial_universe=$2 AND brand_id=$3
