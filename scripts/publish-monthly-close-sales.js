@@ -94,7 +94,7 @@ export async function buildMonthlyCloseSales(period, {
           const from = shift(period,-12), to = period;
           const series = await observed({measure:'VIN_SALES',evidence_shape:'PERIOD_OBSERVATION_SERIES',
             period_from:from,period_to:to,filters:{...filters,dealer_group_id:member_id}});
-          original = {'series_'+from.replace('-','_')+'_'+to.replace('-','_'):series};
+          original = {['series_'+from.replace('-','_')+'_'+to.replace('-','_')]:series};
         }
         const unit_id = unitFor(opening,dimension);
         const parameters = dimension === 'STORE' && opening.brand_id == null
