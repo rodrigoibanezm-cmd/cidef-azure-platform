@@ -28,14 +28,12 @@ function assertCertified(e, dimension, universe, brand, period, end) {
     throw new Error('P1_MONTHLY_TOTAL_MISMATCH');
   return members;
 }
-export async function produceMonthlySales(period, {
-  prepare = prepareSalesInput, pool = getAzurePool(),
-  makeFactSet = createSalesFactSet, observe = observeSalesSelection,
-} = {}) {
+async function producePreparedMonth(period, prepared, {
+  pool, makeFactSet, observe,
+}) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || period >= new Date().toISOString().slice(0,7))
     throw new Error('CLOSED_PERIOD_REQUIRED');
   const end = commercialDateForDay(period, commercialMonthDays(period));
-  const prepared = await prepare(); // Exactly one P1 input capture.
   const factSets = new Map();
   const staged = [];
   for (const [dimension, universe, table, idColumn] of DIMENSIONS) {
@@ -74,4 +72,40 @@ export async function produceMonthlySales(period, {
     await client.query('ROLLBACK');
     throw error;
   } finally { client.release(); }
+}
+
+export async function produceMonthlySales(period, {
+  prepare = prepareSalesInput, pool = getAzurePool(),
+  makeFactSet = createSalesFactSet, observe = observeSalesSelection,
+} = {}) {
+  // Validate the month before loading the shared P1 inputs.
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || period >= new Date().toISOString().slice(0,7))
+    throw new Error('CLOSED_PERIOD_REQUIRED');
+  const prepared = await prepare();
+  return producePreparedMonth(period, prepared, {pool,makeFactSet,observe});
+}
+
+export async function produceMonthlySalesRange(from, to, {
+  prepare = prepareSalesInput, pool = getAzurePool(),
+  makeFactSet = createSalesFactSet, observe = observeSalesSelection,
+  progress = console.log,
+} = {}) {
+  const valid = m => /^\d{4}-(0[1-9]|1[0-2])$/.test(m);
+  if (!valid(from) || !valid(to) || from > to || from < '2025-04'
+    || to > '2026-08') throw new Error('HISTORICAL_RANGE_OUT_OF_BOUNDS');
+  const periods = [];
+  for (let m = from; m <= to;) {
+    periods.push(m);
+    const [y,n] = m.split('-').map(Number);
+    m = new Date(Date.UTC(y,n,1)).toISOString().slice(0,7);
+  }
+  const prepared = await prepare(); // One resource load for the entire range.
+  const results = [];
+  for (const [index, period] of periods.entries()) {
+    progress(`[${index+1}/${periods.length}] ${period}: iniciando`);
+    const result = await producePreparedMonth(period, prepared, {pool,makeFactSet,observe});
+    results.push(result);
+    progress(`[${index+1}/${periods.length}] ${period}: ${result.status}, insertados=${result.inserted}`);
+  }
+  return {from,to,months:periods.length,prepared:1,results};
 }
