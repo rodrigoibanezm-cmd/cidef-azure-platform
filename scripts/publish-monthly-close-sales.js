@@ -3,6 +3,7 @@ import { getAzurePool } from '../lib/azure-postgres.js';
 import { observeDataSource, fetchDataSource } from '../lib/data-floor/registry.js';
 import { executeP2 } from '../lib/p2/execute.js';
 import { journalP3Tool } from '../lib/p3/executionJournal.js';
+import { cachedP1 } from './monthly-close-sales-history.js';
 
 const OPENINGS = [{ id: 'COMPANY', brand_id: null }, { id: 'FOTON', brand_id: '89' }, { id: 'DONGFENG', brand_id: '71' }];
 const DIMENSIONS = ['STORE', 'SELLER', 'DEALER_GROUP', 'MODEL'];
@@ -28,6 +29,7 @@ export async function buildMonthlyCloseSales(period, {
   fetch = (input) => fetchDataSource('SALES', input),
   execute = executeP2,
   journal = journalP3Tool,
+  pool = getAzurePool(),
   run_id = 'monthly-close-sales-' + randomUUID(),
 } = {}) {
   checkPeriod(period);
@@ -37,7 +39,7 @@ export async function buildMonthlyCloseSales(period, {
     const started = Date.now();
     let evidence;
     try {
-      evidence = await observe(input);
+      evidence = await cachedP1(input, { pool, observe });
       if (evidence?.status !== 'CERTIFIED' || evidence?.authority !== 'P1_CERTIFIED' || !evidence.evidence_id)
         throw new Error('P1_EVIDENCE_NOT_CERTIFIED');
       await journal({run_id,floor:'P1',tool_name:'data_observe',
@@ -116,7 +118,7 @@ export async function publishMonthlyCloseSales(period, {
   checkPeriod(period);
   const existing = await pool.query('SELECT period, run_id FROM public.monthly_close_sales_snapshots WHERE period=$1',[period]);
   if (existing.rows.length) return {status:'ALREADY_PUBLISHED',period,run_id:existing.rows[0].run_id};
-  const payload = await build(period);
+  const payload = await build(period, { pool });
   if (payload?.period !== period || !payload.run_id || payload.openings?.length !== 3
     || OPENINGS.some(opening => {
       const item = payload.openings.find(x => x.id === opening.id && x.brand_id === opening.brand_id);
