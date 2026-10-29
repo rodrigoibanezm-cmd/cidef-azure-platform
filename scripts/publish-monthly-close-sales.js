@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { getAzurePool, closeAzurePool } from '../lib/azure-postgres.js';
+import { getAzurePool } from '../lib/azure-postgres.js';
 import { observeDataSource, fetchDataSource } from '../lib/data-floor/registry.js';
 import { executeP2 } from '../lib/p2/execute.js';
 import { journalP3Tool } from '../lib/p3/executionJournal.js';
@@ -117,8 +117,13 @@ export async function publishMonthlyCloseSales(period, {
   const existing = await pool.query('SELECT period, run_id FROM public.monthly_close_sales_snapshots WHERE period=$1',[period]);
   if (existing.rows.length) return {status:'ALREADY_PUBLISHED',period,run_id:existing.rows[0].run_id};
   const payload = await build(period);
-  if (payload?.period !== period || !payload.run_id || payload.openings?.length !== 3)
-    throw new Error('INCOMPLETE_SALES_PAYLOAD');
+  if (payload?.period !== period || !payload.run_id || payload.openings?.length !== 3
+    || OPENINGS.some(opening => {
+      const item = payload.openings.find(x => x.id === opening.id && x.brand_id === opening.brand_id);
+      return !item || DIMENSIONS.some(d => !Array.isArray(item.dimensions?.[d]?.members)
+        || item.dimensions[d].members.some(m => !['IMPROVING','STABLE','DETERIORATING','UNKNOWN'].includes(m.state)
+          || !m.p2?.lineage || !m.evidence?.refs));
+    })) throw new Error('INCOMPLETE_SALES_PAYLOAD');
   const written = await pool.query(
     'INSERT INTO public.monthly_close_sales_snapshots(period,payload,run_id,generated_at) VALUES($1,$2::jsonb,$3,$4) ON CONFLICT(period) DO NOTHING RETURNING period,run_id',
     [period,JSON.stringify(payload),payload.run_id,payload.generated_at]);
