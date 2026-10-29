@@ -35,17 +35,10 @@ export async function produceMonthlySales(period, {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period) || period >= new Date().toISOString().slice(0,7))
     throw new Error('CLOSED_PERIOD_REQUIRED');
   const end = commercialDateForDay(period, commercialMonthDays(period));
-  const existing = new Map();
-  for (const [, , table] of DIMENSIONS) {
-    const r = await pool.query(`SELECT commercial_universe,brand_id FROM public.${table} WHERE period=$1 LIMIT 1`,[period]);
-    existing.set(table, r.rows.length > 0);
-  }
-  if ([...existing.values()].every(Boolean)) return {period,status:'ALREADY_STORED'};
   const prepared = await prepare(); // Exactly one P1 input capture.
   const factSets = new Map();
   const staged = [];
   for (const [dimension, universe, table, idColumn] of DIMENSIONS) {
-    if (existing.get(table)) continue; // Closed stored dimensions are immutable.
     if (!factSets.has(universe)) {
       const certified = prepared.recognize({commercial_universe:universe,cutoff_date:end});
       factSets.set(universe,makeFactSet(certified,prepared.identity));
@@ -69,8 +62,8 @@ export async function produceMonthlySales(period, {
     let inserted = 0;
     for (const row of staged) {
       const sql = `INSERT INTO public.${row.table}
-        (period,commercial_universe,brand_id,${row.idColumn},vin_sales,evidence_id)
-        VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`;
+        (period,commercial_universe,brand_id,${row.idColumn},vin_sales,evidence_id,certified_at)
+        VALUES ($1,$2,$3,$4,$5,$6,NOW()) ON CONFLICT DO NOTHING`;
       const result = await client.query(sql,[period,row.universe,row.brand,row.id,row.vin_sales,row.evidence_id]);
       inserted += result.rowCount;
     }
