@@ -44,7 +44,7 @@ export async function refreshFinanzas() {
     if (!brands.has(marca)) continue;
     const tipo = clean(at(row, 'TIPO')), cantidad = Number(at(row, 'CANT'));
     const fecha = clean(at(row, 'FECHA'));
-    const match = /^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/.exec(fecha);
+    const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(fecha);
     const vin = clean(at(row, 'VIN')), numero = clean(at(row, 'NUMERO'));
     if (!match || !vin || !numero || !['FAC-EL', 'N/C-EL'].includes(tipo) ||
       cantidad !== (tipo === 'FAC-EL' ? 1 : -1)) {
