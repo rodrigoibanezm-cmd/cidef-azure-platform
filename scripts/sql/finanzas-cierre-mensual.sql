@@ -16,3 +16,24 @@ CREATE TABLE IF NOT EXISTS finanzas_cierre_hojas (
   celdas jsonb NOT NULL,
   PRIMARY KEY (periodo, orden_hoja)
 );
+
+-- Movimientos contables normalizados; el RAW anterior permanece intacto.
+CREATE TABLE IF NOT EXISTS finanzas_ventas (
+  periodo text NOT NULL REFERENCES finanzas_cierre_archivos(periodo),
+  fila_excel integer NOT NULL,
+  empresa text NOT NULL,
+  tipo_documento text NOT NULL CHECK (tipo_documento IN ('FAC-EL', 'N/C-EL')),
+  numero_documento text NOT NULL,
+  fecha_documento date NOT NULL,
+  rut text,
+  vin text NOT NULL,
+  marca text NOT NULL CHECK (marca IN ('DFM', 'DFLM', 'FOTON')),
+  cantidad integer NOT NULL CHECK (cantidad IN (-1, 1)),
+  factura text,
+  modelo text,
+  sucursal text,
+  neto numeric,
+  iva numeric,
+  total numeric,
+  PRIMARY KEY (periodo, fila_excel)
+);
