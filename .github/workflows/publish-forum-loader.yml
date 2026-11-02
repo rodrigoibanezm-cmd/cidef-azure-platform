@@ -21,6 +21,21 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate certified snapshot parity report
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+          DATABASE_URL: ''
+          POSTGRES_URL: ''
+          FORUM_SNAPSHOT_REPORT: docs/forum-snapshot-parity.json
+        run: |
+          set -euo pipefail
+          test -n "${AZURE_DATABASE_URL:-}"
+          npm install --omit=dev --ignore-scripts
+          node scripts/refresh-forum-ventas-snapshot-azure.js --compare
+          node -e "const r=require('./docs/forum-snapshot-parity.json'); if(r.status!=='PASS'||r.published!==false||!r.engine_signature) process.exit(1)"
       - name: ACR login
         run: az acr login --name cidefprodacr
       - name: Build and publish Forum image
