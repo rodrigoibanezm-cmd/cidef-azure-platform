@@ -182,22 +182,6 @@ export async function run() {
   const result = await replaceTableSnapshot(TABLE_NAME, KEEP_COLUMNS, rows);
   const operationalDateOverridesApplied = await applyOperationalDateOverrides();
 
-  // Excepción comercial: venta de Génesis Camacho asignada a Florida, no Quilín.
-  // Copiar ambos campos desde su otra venta de octubre evita asumir IDs del ERP.
-  const floridaReference = await queryDb(
-    "SELECT DISTINCT id_sucursal_vta, desc_sucursal_vta FROM ventas_raw " +
-    "WHERE upper(btrim(nro_vin_chasis)) = 'LVAV2JVB4TE322364'"
-  );
-  if (floridaReference.length !== 1 || !/FLORIDA/i.test(String(floridaReference[0].desc_sucursal_vta))) {
-    throw new Error('Sucursal Florida de referencia ausente o ambigua');
-  }
-  const floridaOverride = await queryDb(
-    "UPDATE ventas_raw SET id_sucursal_vta = $1, desc_sucursal_vta = $2 " +
-    "WHERE upper(btrim(nro_vin_chasis)) = 'LVAV2MAB7VU602859' RETURNING nro_vin_chasis",
-    [floridaReference[0].id_sucursal_vta, floridaReference[0].desc_sucursal_vta],
-  );
-  if (!floridaOverride.length) throw new Error('VIN de Génesis Camacho no encontrado para corrección');
-
   return {
     source: blobSource(file),
     sheet: SHEET_NAME,
