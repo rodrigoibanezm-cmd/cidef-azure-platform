@@ -38,8 +38,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       completedDates: error.completedDates || [],
       // Avoid logging provider/driver error messages that can contain credentials or row data.
       code: error.code || error.name,
+      stage: error.salesStage || 'sales_refresh',
       message: error.code === 'ERR_ASSERTION' ? error.message
         : error.code ? 'Provider/database error; inspect the error code' : error.message,
+      ...(error.code === 'ERR_ASSERTION' ? {
+        expected: typeof error.expected === 'number' ? error.expected : null,
+        actual: typeof error.actual === 'number' ? error.actual : null,
+      } : {}),
     }));
     process.exitCode = 1;
   });
