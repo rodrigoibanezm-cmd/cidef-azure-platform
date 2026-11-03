@@ -5,3 +5,6 @@ node_modules/
 coverage/
 dist/
 *.log
+__pycache__/
+.venv/
+monthly-close-reports/
