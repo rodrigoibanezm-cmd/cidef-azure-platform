@@ -31,6 +31,7 @@ export async function refreshDay({ client, container, date, loaders = LOADERS,
   const files = await inspectDay(container, date);
   const signature = sourceSignature(files);
   const startedAt = Date.now();
+  let stage = 'begin_transaction';
   await client.query('BEGIN');
   try {
     return await withSourceContext({ client, container, date, files }, async () => {
@@ -55,16 +56,20 @@ export async function refreshDay({ client, container, date, loaders = LOADERS,
         SELECT vin, to_jsonb(v) AS payload FROM public.vehiculo_canonico v`);
       const sources = {};
       for (let index = 0; index < LOADERS.length; index++) {
+        stage = 'load_' + TABLES[index];
         sources[TABLES[index]] = await loaders[index]();
       }
       // Existing canonical SQL and recognition/resolution rules, on this same transaction.
+      stage = 'canonical_preview';
       const preview = await refreshCanonical({ dry_run: true, execute: queryDb });
       assert.equal(Number(preview.before.canonical_extra_before), 0, 'Refresh would delete canonical VINs; blocked');
+      stage = 'canonical_refresh';
       const canonical = await refreshCanonical({ dry_run: false, execute: queryDb });
       assert.equal(Number(canonical.base.rows_deleted), 0, 'Canonical refresh deleted records');
       const result = { engine: 'refresh_sales_sources_v01', version: 'azure-1', date, runId,
         signature, status: 'LOADED', strategy: 'FOUR_SOURCE_REFRESH_THEN_CANONICALIZE',
         sources, canonical, elapsedMs: Date.now() - startedAt };
+      stage = 'save_sales_history';
       const [history] = await queryDb(`WITH changes AS (
         SELECT coalesce(b.vin, a.vin) AS vin, b.payload AS before, to_jsonb(a) AS after
         FROM sales_canonical_before b FULL JOIN public.vehiculo_canonico a USING(vin)
@@ -76,12 +81,13 @@ export async function refreshDay({ client, container, date, loaders = LOADERS,
         RETURNING jsonb_array_length(vin_changes) AS changed_vins
       ) SELECT changed_vins FROM inserted`,
       [date, signature, runId, JSON.stringify(files), JSON.stringify(result)]);
+      stage = 'commit';
       await client.query('COMMIT');
       return { ...result, changedVins: history.changed_vins };
     });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
-    throw error;
+    throw Object.assign(error, { salesStage: stage });
   }
 }
 
