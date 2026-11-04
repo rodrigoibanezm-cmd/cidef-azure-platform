@@ -6,9 +6,11 @@ import { getAzurePool } from "../lib/azure-postgres.js";
 export function isReadOnlyRoute(path) {
   const secret = process.env.MCP_READONLY_TOKEN || "";
   if (secret.length < 32) return false;
-  const expected = Buffer.from("/readonly/" + secret + "/mcp");
   const actual = Buffer.from(path);
-  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  return ["/readonly/" + secret + "/mcp", "/api/mcp/" + secret].some(route => {
+    const expected = Buffer.from(route);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  });
 }
 
 export function makeReadOnlyServer() {
