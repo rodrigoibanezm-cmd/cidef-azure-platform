@@ -4,6 +4,7 @@ WORKDIR /app
 COPY mcp/package.json ./package.json
 RUN npm install --omit=dev --no-audit --no-fund
 COPY mcp/server.js ./server.js
+COPY mcp/read-only.js ./mcp/read-only.js
 COPY lib ./lib
 COPY scripts/pricing/price-episode-canonicalizer-v01.js ./scripts/pricing/price-episode-canonicalizer-v01.js
 COPY scripts/pricing-p1 ./scripts/pricing-p1
