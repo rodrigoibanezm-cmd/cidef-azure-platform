@@ -1,26 +1,19 @@
 # CIDEF Azure Platform
 
-Plataforma independiente de ingesta, normalización, motores, APIs y MCP de CIDEF sobre Azure.
+Backend Azure: Azure Blob -> loaders -> PostgreSQL RAW/canónico -> P1/P2 -> API/MCP -> frontend.
 
-## Reglas invariables
+## Premisas vigentes
+- Azure es el único runtime objetivo. Neon/Vercel/R2 son legado de referencia, no dependencias de ejecución.
+- P1 certifica hechos, identidad y universos; P2 calcula de forma determinista; P3 interpreta y registra trazabilidad.
+- No reemplazar reglas por prompts, ni copiar Neon como ingesta, ni destruir maestros.
+- El frontend staging y producción comparten datos PostgreSQL Azure: evitar escrituras de prueba.
+- Cada indicador exige fuente, período, corte y contrato. No inferir éxito de producción desde un commit.
 
-- La operación Neon/Vercel/R2 en `rodrigoibanezm-cmd/cidef-data-loader` sigue activa y no se modifica desde este repositorio.
-- Nunca copiar tablas desde Neon como mecanismo de ingesta. Leer fuentes originales, almacenar respaldos en Azure Blob y procesarlas en Azure.
-- Neon puede consultarse para conciliación de resultados, no es una dependencia de ejecución.
-- Ninguna publicación o actualización de este repositorio debe desplegar en la infraestructura de Neon/Vercel.
-- PostgreSQL Azure es la base de esta plataforma; operaciones destructivas requieren autorización explícita.
-- No declarar una vertical certificada sin pruebas reproducibles y conciliación.
+## Recursos
+rg-cidef-prod; cidef-postgres-prod; cidefprodstorage; cidefprodacr; cidef-data-loader-job; cidef-motor-test-azure.
 
-## Estado inicial
+## Documentación
+AGENTS.md contiene reglas operativas; docs/ARCHITECTURE.md describe el diseño; docs/MIGRATION-STATE.md es una fotografía histórica del 8 de octubre, no estado actual. Verificar Actions, revisiones desplegadas y datos antes de declarar un módulo completo.
 
-El MCP PostgreSQL existente ya se despliega desde este repositorio. La primera capacidad P1 incorporada es el motor SALES `ventas_monthly_actual_v01`, expuesto como herramienta de lectura del MCP y conectado exclusivamente mediante `AZURE_DATABASE_URL`.
-
-## Orden de construcción
-
-1. Configurar autenticación OIDC GitHub → Azure específica de esta repo.
-2. Trasladar loader streaming de `ventas_raw` y pipeline, conservando el Job de Azure hasta probar la nueva ruta.
-3. Implementar loader de `vehiculos_raw` desde archivos fuente de Azure Blob.
-4. Incorporar dependencias canónicas y sus pruebas (`notas_venta_raw`, alias de producto, reglas de salida).
-5. Implementar progresivamente motores SALES, RVM, CRM, PRICING y FORUM en Azure.
-
-Ver `docs/ARCHITECTURE.md` y `docs/MIGRATION-STATE.md`.
+## Cambio reciente
+Commit 8a64533 (3 de noviembre): preservar VIN históricos ausentes del inventario abreviado. No prueba una carga productiva exitosa.
