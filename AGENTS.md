@@ -20,3 +20,4 @@ Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related ta
 - Front need not depend on remote MCP; server-side API can call certified P1/P2/P3 contracts. Verify current deployed interface. Snapshot architecture: `docs/COMO-VAMOS-SNAPSHOTS.md`.
 - No new branch/infrastructure, repeated loads or broad tests unless needed/requested. Work on `main`. On broad tasks: diagnosis -> proposal -> implementation, separately.
 - Report changes, evidence, failures, next blocker concisely. Never claim certification without validation.
+- Do not run tests, commercial audits/reconciliations, or analytical validation scripts in GitHub Actions. Deployment Actions build and deploy only. Any necessary checks are performed locally or manually outside Actions; do not reintroduce test/validation jobs without explicit user instruction.
