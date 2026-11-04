@@ -3,7 +3,7 @@
 ## Runtime
 
 - Storage: Azure Blob Storage, cuenta `cidefprodstorage` (Chile Central), contenedor `cidef` para fuentes de operación según configuración efectiva.
-- Compute: Azure Container Apps Jobs (ingesta), servicios Azure por definir para API y MCP.
+- Compute: Azure Container Apps Jobs (ingesta), servicios Azure para API/MCP, cuya implementación y despliegue deben verificarse por separado.
 - DB: Azure PostgreSQL Flexible Server `cidef-postgres-prod.postgres.database.azure.com`, PostgreSQL 17, base `postgres`.
 - Container registry: `cidefprodacr`.
 - Resource group: `rg-cidef-prod`; suscripción: `ANAC-AZURE`.
