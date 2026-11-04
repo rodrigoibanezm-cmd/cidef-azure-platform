@@ -39,6 +39,14 @@ test('October replaces SALES with signed movements and retains exact invoice ide
   // A credit note without a same-month invoice remains negative, never discarded.
   assert.equal(selection.facts.find(r=>r.vin==='CREDIT').finanzas_cantidad,-1);
 });
+test('explicit SALES source ignores imported Finanzas close', () => {
+  const p = prepared(finanzas);
+  const salesOnly = p.buildFactSet({ commercial_universe:'COMPANY', cutoff_date:'2026-10-31', sales_source:'SALES' });
+  const selection = salesOnly.select({ commercial_universe:'COMPANY', date_from:'2026-10-01', date_to:'2026-10-31' });
+  assert.equal(selection.facts.some(row => row.source_id?.startsWith('finanzas:')), false);
+  assert.equal(selection.facts.length, 1);
+});
+
 test('September without a Finanzas close preserves the existing SALES facts and result', () => {
   const before=select(prepared([]),'2026-09'), after=select(prepared(finanzas),'2026-09');
   assert.deepEqual(after.facts,before.facts);
