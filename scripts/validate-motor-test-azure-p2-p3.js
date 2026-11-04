@@ -97,9 +97,10 @@ try {
     'p2_discover',
     'p2_describe',
     'p2_execute',
+    'research',
     'run_trace',
   ].sort();
-  assert.deepEqual(toolNames, expectedTools, 'The deployed MCP tool list differs from the original 12 tools.');
+  assert.deepEqual(toolNames, expectedTools, 'The deployed MCP tool list differs from the expected 13 tools, including research.');
 
   const salesDescriptionResult = await client.callTool({
     name: 'data_describe',

@@ -17,6 +17,7 @@ const expectedTools = [
   'p2_discover',
   'p2_describe',
   'p2_execute',
+  'research',
   'run_trace',
 ];
 
