@@ -1,0 +1,63 @@
+{
+  "report": "Dongfeng Chile — análisis Product Manager",
+  "as_of": "2026-11-04",
+  "period": {
+    "from": "2026-05",
+    "to": "2026-10",
+    "focus": "2026-10"
+  },
+  "scope": {
+    "general": [
+      "AEOLUS",
+      "FORTHING"
+    ],
+    "deep_dive": "AEOLUS",
+    "brand_id": "71"
+  },
+  "sources": {
+    "sales": {
+      "authority": "P1_CERTIFIED",
+      "evidence_id": "p1.sales.52b53e15cb44d6d424c10bae",
+      "measure": "VIN_SALES",
+      "grain": "COMMERCIAL_MONTH",
+      "monthly": {
+        "2026-05": 260,
+        "2026-06": 175,
+        "2026-07": 179,
+        "2026-08": 341,
+        "2026-09": 203,
+        "2026-10": 219
+      }
+    },
+    "rvm": {
+      "authority": "P1_CERTIFIED",
+      "evidence_id": "p1.rvm.b0a0dc39ddd9c21323f22b70",
+      "measure": "RVM_UNITS",
+      "grain": "CALENDAR_MONTH",
+      "filter": {
+        "brand": "DONGFENG"
+      },
+      "monthly": {
+        "2026-05": 73,
+        "2026-06": 48,
+        "2026-07": 35,
+        "2026-08": 46,
+        "2026-09": 47,
+        "2026-10": 58
+      }
+    },
+    "forum": {
+      "authority": "P1_CERTIFIED",
+      "evidence_id": "FORUM:UFIS:2026-10:2026-10-31:1793796221984",
+      "measure": "UFIS",
+      "period": "2026-10",
+      "value": 88
+    }
+  },
+  "notes": [
+    "Las series generales corresponden a marca Dongfeng; todavía no están separadas por familia.",
+    "La serie RVM filtrada por marca DONGFENG no debe equipararse automáticamente al universo comercial de familias Aeolus/Forthing.",
+    "Pendiente recopilar desglose AEOLUS por modelo, RVM competitivo y embudo FORUM.",
+    "SALES usa mes comercial y RVM mes calendario; no comparar como mismo evento."
+  ]
+}
