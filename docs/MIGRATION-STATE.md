@@ -1,4 +1,6 @@
-# Migration state — 2026-10-08
+# Historical migration snapshot — 2026-10-08
+
+> ARCHIVED STATE: This document records the 8 October baseline, not current deployment status. See README.md and AGENTS.md for current architectural premises. The October pending checklist must not be interpreted as current pending work without inspecting Azure and GitHub Actions.
 
 ## Separate systems
 
