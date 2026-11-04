@@ -5,6 +5,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { getAzurePool } from "../lib/azure-postgres.js";
+import { isReadOnlyRoute, makeReadOnlyServer } from "./mcp/read-only.js";
 import { ventasMonthlyActualV01 } from "../lib/motors/ventas-monthly-actual-v01.js";
 import { pricingHistoryV01 } from "../lib/motors/pricing-history-v01.js";
 import { describeSales, observeSalesEvidence } from "../lib/data-floor/salesCertifier.js";
@@ -395,12 +396,13 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=300" }).end(JSON.stringify(metadata()));
     return;
   }
-  if (path !== "/mcp") {
+  const readonly = isReadOnlyRoute(path);
+  if (path !== "/mcp" && !readonly) {
     res.writeHead(404).end("Not found");
     return;
   }
 
-  const principal = await authorize(req, res);
+  const principal = readonly ? { subject: "readonly-link" } : await authorize(req, res);
   if (!principal) return;
   audit({ action: "mcp.request", subject: principal.subject, method: req.method });
 
@@ -420,7 +422,7 @@ const httpServer = http.createServer(async (req, res) => {
       return;
     }
   }
-  const mcp = makeServer(principal);
+  const mcp = readonly ? makeReadOnlyServer() : makeServer(principal);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
   try {
     await mcp.connect(transport);
