@@ -3,7 +3,7 @@ import { getAzurePool, closeAzurePool } from '../lib/azure-postgres.js';
 
 // Períodos cerrados: un snapshot se publica una vez y no se sobrescribe.
 const months = [];
-for (let y = 2025, m = 10; y < 2026 || m <= 10; m++) {
+for (let y = 2025, m = 1; y < 2026 || m <= 10; m++) {
   if (m === 13) { y++; m = 1; }
   months.push(`${y}-${String(m).padStart(2, '0')}`);
 }
