@@ -1,6 +1,5 @@
 import { fetchDataSource, observeDataSource } from '../lib/data-floor/registry.js';
 import { getAzurePool, closeAzurePool } from '../lib/azure-postgres.js';
-import { pathToFileURL } from 'node:url';
 
 // Períodos cerrados: un snapshot se publica una vez y no se sobrescribe.
 const months = [];
@@ -8,11 +7,10 @@ for (let y = 2025, m = 1; y < 2026 || m <= 10; m++) {
   if (m === 13) { y++; m = 1; }
   months.push(`${y}-${String(m).padStart(2, '0')}`);
 }
-export async function publishDealerMonth(period, { mutable = false, cutoffDate } = {}) {
-  const client = await getAzurePool().connect();
-  try {
+try {
+  for (const period of months) {
     const [y, m] = period.split('-').map(Number);
-    const cutoff = cutoffDate || new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    const cutoff = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
     const filters = { commercial_universe: 'DEALERS', sales_source: 'SALES',
       date_from: period + '-01', date_to: cutoff };
     const evidence = await observeDataSource('SALES', { measure: 'VIN_SALES', filters });
@@ -34,15 +32,16 @@ export async function publishDealerMonth(period, { mutable = false, cutoffDate }
       const key = [dealer, brand, model].join('|');
       groups.set(key, (groups.get(key) ?? 0) + Number(sale.quantity));
     }
-    await client.query('BEGIN');
+    const client = await getAzurePool().connect();
     try {
+      await client.query('BEGIN');
       const previous = await client.query(
         'SELECT 1 FROM dealer_monthly_model_sellin_snapshots WHERE period=$1 LIMIT 1', [period]);
-      if (previous.rowCount && !mutable) {
+      if (previous.rowCount) {
         await client.query('ROLLBACK');
-        return { period, status: 'ALREADY_FROZEN' };
+        console.log(JSON.stringify({ period, status: 'ALREADY_FROZEN' }));
+        continue;
       }
-      if (mutable) await client.query('DELETE FROM dealer_monthly_model_sellin_snapshots WHERE period=$1', [period]);
       for (const [key, units] of groups) {
         const [dealer, brand, model] = key.split('|').map(Number);
         await client.query(`INSERT INTO dealer_monthly_model_sellin_snapshots
@@ -51,13 +50,8 @@ export async function publishDealerMonth(period, { mutable = false, cutoffDate }
           [period, dealer, brand, model, units, cutoff, evidence.evidence_id]);
       }
       await client.query('COMMIT');
-      return { period, status: mutable ? 'UPDATED' : 'FROZEN', units: evidence.payload.value, rows: groups.size };
+      console.log(JSON.stringify({ period, status: 'FROZEN', units: evidence.payload.value, rows: groups.size }));
     } catch (error) { await client.query('ROLLBACK'); throw error; }
-  } finally { client.release(); }
-}
-
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    for (const period of months) console.log(JSON.stringify(await publishDealerMonth(period)));
-  } finally { await closeAzurePool(); }
-}
+    finally { client.release(); }
+  }
+} finally { await closeAzurePool(); }
