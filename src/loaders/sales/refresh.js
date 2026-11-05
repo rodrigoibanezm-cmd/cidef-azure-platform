@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { getAzurePool } from '../../../lib/azure-postgres.js';
 import { refreshVehiculoCanonicoV01 } from '../../../lib/canonical/refresh-vehiculo-canonico-v01.js';
+import { publishDealerMonth } from '../../../scripts/publish-dealer-monthly-model-sellin.js';
 import { run as vehicles } from './import-vehiculos.js';
 import { run as sales } from './import-estadisticas-venta.js';
 import { run as salesNotes } from './import-notas-venta.js';
@@ -114,8 +115,14 @@ export async function runSalesRefresh({ dates, container, pool, log = () => {},
       log({ runId, date, status: 'RUNNING' });
       try {
         const result = await refreshDay({ client, container, date, loaders, refreshCanonical, runId });
-        results.push(result);
-        log(result);
+        // SALES already refreshed the canonical (sell-out); publish open-month sell-in separately.
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Santiago', year: 'numeric', month: 'numeric' }).formatToParts(new Date());
+        const currentMonth = parts.find(p => p.type === 'year').value + '-' + parts.find(p => p.type === 'month').value.padStart(2, '0');
+        const dealerSnapshot = date.slice(0, 7) === currentMonth
+          ? await publishDealerMonth(currentMonth, { mutable: true, cutoffDate: date }) : null;
+        const completed = { ...result, ...(dealerSnapshot ? { dealerSnapshot } : {}) };
+        results.push(completed);
+        log(completed);
       } catch (error) {
         log({ runId, date, status: 'FAILED', completedDates: results.map(r => r.date) });
         throw Object.assign(error, { sourceDate: date, completedDates: results.map(r => r.date) });
