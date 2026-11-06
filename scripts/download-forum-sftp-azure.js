@@ -27,13 +27,18 @@ function sftp(commands, password) {
   });
 }
 
+async function inStage(stage, operation) {
+  try { return await operation(); }
+  catch (error) { error.stage = stage; throw error; }
+}
+
 export async function downloadForumSftp() {
   const password = process.env.FORUM_SFTP_PASSWORD;
   const connection = process.env.AZURE_STORAGE_CONNECTION_STRING;
   assert.ok(password && connection, 'FORUM_SFTP_PASSWORD and AZURE_STORAGE_CONNECTION_STRING required');
   const container = BlobServiceClient.fromConnectionString(connection)
     .getContainerClient(process.env.AZURE_CONTAINER || 'cidef');
-  const listing = await sftp(['ls -1 /cidef'], password);
+  const listing = await inStage('sftp_list', () => sftp(['ls -1 /cidef'], password));
   const remote = [...new Set(listing.split(/\r?\n/).map(s => s.trim())
     .filter(name => FILE.test(name)))].sort();
   const byDate = new Map();
@@ -46,20 +51,20 @@ export async function downloadForumSftp() {
   const pending = [];
   for (const name of ready) {
     const blob = container.getBlockBlobClient('Forum/' + name);
-    if (!(await blob.exists())) pending.push(name);
+    if (!(await inStage('blob_check', () => blob.exists()))) pending.push(name);
   }
   const dir = await mkdtemp(path.join(os.tmpdir(), 'forum-sftp-'));
   const downloaded = [];
   try {
     for (const name of pending) {
       const destination = path.join(dir, name);
-      await sftp(['get /cidef/' + name + ' ' + destination], password);
+      await inStage('sftp_download', () => sftp(['get /cidef/' + name + ' ' + destination], password));
       const bytes = await readFile(destination);
       assert.ok(bytes.length, 'Empty Forum CSV: ' + name);
       const blob = container.getBlockBlobClient('Forum/' + name);
       try {
-        await blob.uploadData(bytes, { conditions: { ifNoneMatch: '*' },
-          blobHTTPHeaders: { blobContentType: 'text/csv' } });
+        await inStage('blob_upload', () => blob.uploadData(bytes, { conditions: { ifNoneMatch: '*' },
+          blobHTTPHeaders: { blobContentType: 'text/csv' } }));
         downloaded.push(name);
       } catch (error) {
         if (error.statusCode !== 409 && error.statusCode !== 412) throw error;
@@ -72,7 +77,12 @@ export async function downloadForumSftp() {
 
 if (process.argv[1]?.endsWith('/download-forum-sftp-azure.js')) {
   downloadForumSftp().then(result => console.log(JSON.stringify(result))).catch(error => {
-    console.error(JSON.stringify({ status: 'FAILED', code: error.code || error.name }));
+    console.error(JSON.stringify({
+      status: 'FAILED', stage: error.stage || 'configuration',
+      code: error.code || error.name,
+      ...(error.statusCode ? { http_status: error.statusCode } : {}),
+      ...(error.message?.startsWith('SFTP failed') ? { detail: error.message } : {}),
+    }));
     process.exitCode = 1;
   });
 }
