@@ -4,6 +4,6 @@ COPY package.json ./
 RUN npm install --omit=dev --ignore-scripts
 COPY lib ./lib
 COPY src/loaders/sales ./src/loaders/sales
-COPY scripts/refresh-sales-sources-azure.js ./scripts/
+COPY scripts/refresh-sales-sources-azure.js scripts/refresh-forum-ventas-snapshot-azure.js ./scripts/
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 CMD ["node", "scripts/refresh-sales-sources-azure.js"]
