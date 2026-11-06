@@ -108,3 +108,28 @@ test('cache remains valid after PostgreSQL JSONB reorders every object key',asyn
   assert.equal(f.calls.length,0);assert.equal(warm.stats.reused,6);
   assertSnapshotParity(warm.rows,full.rows);
 });
+
+test('SALES November is available with October FORUM cutoff and no invented FORUM metrics',async()=>{
+  const f=fixture();
+  f.context.periods.push('2026-04');
+  f.context.cutoffs={sales:'2026-04-10',forum:'2026-03-31'};
+  for(const n of ['OWN_STORES','DEALERS']){
+    f.context.sales_facts[n+':2026-04']=structuredClone(f.facts[n]);
+    f.context.sales_signatures[n+':2026-04']=digest(f.facts[n]);
+  }
+  f.context.forum_signatures['2026-04']='forum:unavailable';
+  f.calls.length=0;
+  const result=await f.run();
+  const april=result.rows.filter(r=>r.period==='2026-04');
+  assert.equal(april.length,2);
+  for(const row of april){
+    assert.equal(row.forum_cutoff,'2026-03-31');
+    assert.deepEqual(row.payload.forum_p1,{});
+    const current=row.payload.history.find(h=>h.period==='2026-04');
+    assert.equal(current.forum_status,'UNAVAILABLE_PERIOD');
+    assert.deepEqual(current.forum,{});
+    assert.equal('dealer_ufis' in current,false);
+    assert.ok(row.payload.reports['2026-04']);
+  }
+  assert.equal(f.calls.filter(c=>c.name==='data_observe'&&c.args.period_from==='2026-04').length,0);
+});
