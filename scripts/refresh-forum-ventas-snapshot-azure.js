@@ -11,8 +11,8 @@ import { assertSnapshotParity, digest, engineSignature, indexCache, inspectPlan 
 import { closeAzurePool } from '../lib/azure-postgres.js';
 
 const flags=new Set(process.argv.slice(2));
-if([...flags].some(x=>!['--validate','--publish','--compare','--full'].includes(x))||['--validate','--publish','--compare'].filter(x=>flags.has(x)).length>1)throw new Error('USE_VALIDATE_COMPARE_OR_PUBLISH_OPTIONALLY_FULL');
-const publish=flags.has('--publish'), compare=flags.has('--compare'), forceFull=flags.has('--full');
+if([...flags].some(x=>!['--validate','--publish','--publish-sales','--compare','--full'].includes(x))||['--validate','--publish','--publish-sales','--compare'].filter(x=>flags.has(x)).length>1)throw new Error('USE_VALIDATE_COMPARE_OR_PUBLISH_OPTIONALLY_FULL');
+const salesPublish=flags.has('--publish-sales'),publish=flags.has('--publish')||salesPublish,compare=flags.has('--compare'),forceFull=flags.has('--full');
 if(publish&&process.env.FORUM_SNAPSHOT_PUBLISHER!=='azure-platform')throw new Error('PUBLISHER_HANDOFF_NOT_CONFIRMED');
 const url=process.env.AZURE_DATABASE_URL;
 if(!url||new URL(url).hostname!=='cidef-postgres-prod.postgres.database.azure.com')throw new Error('AZURE_DATABASE_REQUIRED');
@@ -42,7 +42,7 @@ try{
   for(const source of ['SALES','FORUM'])contracts[source]=await callCertified('data_describe',{run_id,source});
   context.engine=digest({engine,contracts});
   // Pin the contracts observed during validation as well as the local source.
-  if(publish){
+  if(publish&&!salesPublish){
     const attestation=JSON.parse(await readFile(new URL('../docs/forum-snapshot-parity.json',import.meta.url),'utf8'));
     if(attestation.status!=='PASS'||attestation.engine_signature!==context.engine)throw new Error('INCREMENTAL_LIVE_PARITY_REQUIRED');
     publicationAuthorized=true;
@@ -59,7 +59,7 @@ try{
     console.log(JSON.stringify({event:'SNAPSHOT_EXECUTION',...m}));return result;
   }
   let result;
-  if(compare){
+  if(compare||salesPublish){
     // Build a fresh independent full candidate, then exercise the warm cache
     // and a forced SALES refresh of the open month using REAL MCP responses.
     const full=await generate('full',context,{forceFull:true});
@@ -83,6 +83,9 @@ try{
       metrics,comparison:'Every business value, identity, dimension, cutoff and quality flag; volatile provenance excluded',
       historical_invalidation:'node --test test/forum-snapshot-incremental.test.js',published:false};
     comparisonReport=report;
+    // SALES publication needs no precomputed attestation: the live full/warm/changed
+    // parity checks above must pass against the current certified P1 contracts.
+    if(salesPublish)publicationAuthorized=true;
   }else{
     console.log(JSON.stringify({event:'SNAPSHOT_PLAN',dependency_ms,plan:inspectPlan(context,cache,forceFull)}));
     await state({status:'BUILDING',source_signature:context.guard,sales_cutoff:sourceCutoffs.sales,forum_cutoff:sourceCutoffs.forum,run_id});
