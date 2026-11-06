@@ -42,10 +42,33 @@ export async function commitTableSnapshot(snapshot) {
   const missing = stage.filter(c => !types.has(c.name));
   if (missing.length) throw new Error('Azure RAW schema mismatch: ' + missing.map(c => c.name).join(','));
   const names = stage.map(c => c.name);
-  // Preserve table identity, grants, indexes, defaults, and referencing views.
-  await queryDb(`DELETE FROM public.${quoteIdent(snapshot.tableName)}`);
-  await queryDb(`INSERT INTO public.${quoteIdent(snapshot.tableName)} (${names.map(quoteIdent).join(',')})
-    SELECT ${names.map(n => `${quoteIdent(n)}::${types.get(n)}`).join(',')} FROM ${quoteIdent(snapshot.staging)}`);
+  // A reduced SALES workbook is a partial refresh, not a complete historical snapshot.
+  if (snapshot.tableName === 'ventas_raw') {
+    if (!names.includes('id')) throw new Error('SALES merge requires source id');
+    const [source] = await queryDb(`SELECT count(*)::int AS total, count(DISTINCT id)::int AS unique_ids
+      FROM ${quoteIdent(snapshot.staging)} WHERE id IS NOT NULL AND btrim(id) <> ''`);
+    const [all] = await queryDb(`SELECT count(*)::int AS total FROM ${quoteIdent(snapshot.staging)}`);
+    const [existing] = await queryDb(`SELECT count(*)::int AS total, count(DISTINCT id)::int AS unique_ids
+      FROM public.ventas_raw WHERE id IS NOT NULL AND btrim(id::text) <> ''`);
+    const [current] = await queryDb('SELECT count(*)::int AS total FROM public.ventas_raw');
+    if (source.total !== all.total || source.unique_ids !== all.total ||
+        existing.total !== current.total || existing.unique_ids !== current.total) {
+      throw new Error('SALES merge blocked: null or duplicate source id');
+    }
+    const updates = names.filter(n => n !== 'id')
+      .map(n => `${quoteIdent(n)} = s.${quoteIdent(n)}::${types.get(n)}`).join(',');
+    await queryDb(`UPDATE public.ventas_raw AS t SET ${updates}
+      FROM ${quoteIdent(snapshot.staging)} AS s WHERE t.id::text = s.id`);
+    await queryDb(`INSERT INTO public.ventas_raw (${names.map(quoteIdent).join(',')})
+      SELECT ${names.map(n => `s.${quoteIdent(n)}::${types.get(n)}`).join(',')}
+      FROM ${quoteIdent(snapshot.staging)} AS s
+      WHERE NOT EXISTS (SELECT 1 FROM public.ventas_raw AS t WHERE t.id::text = s.id)`);
+  } else {
+    // Existing snapshot semantics remain unchanged for non-SALES tables.
+    await queryDb(`DELETE FROM public.${quoteIdent(snapshot.tableName)}`);
+    await queryDb(`INSERT INTO public.${quoteIdent(snapshot.tableName)} (${names.map(quoteIdent).join(',')})
+      SELECT ${names.map(n => `${quoteIdent(n)}::${types.get(n)}`).join(',')} FROM ${quoteIdent(snapshot.staging)}`);
+  }
   await queryDb(`DROP TABLE ${quoteIdent(snapshot.staging)}`);
 }
 
