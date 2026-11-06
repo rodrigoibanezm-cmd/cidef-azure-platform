@@ -1,3 +1,4 @@
+import { refreshDealerSellout } from '../../../lib/data-floor/refreshDealerSellout.js';
 import { createHash, randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { getAzurePool } from '../../../lib/azure-postgres.js';
@@ -70,6 +71,9 @@ export async function refreshDay({ client, container, date, loaders = LOADERS,
       const result = { engine: 'refresh_sales_sources_v01', version: 'azure-1', date, runId,
         signature, status: 'LOADED', strategy: 'FOUR_SOURCE_REFRESH_THEN_CANONICALIZE',
         sources, canonical, elapsedMs: Date.now() - startedAt };
+      stage = 'refresh_dealer_sellout';
+      const sellout = await refreshDealerSellout(queryDb);
+      result.sellout = sellout;
       stage = 'save_sales_history';
       const [history] = await queryDb(`WITH changes AS (
         SELECT coalesce(b.vin, a.vin) AS vin, b.payload AS before, to_jsonb(a) AS after
