@@ -13,7 +13,7 @@ const TYPES = ['Cotizacion', 'Curse', 'Precurse'];
 function sftp(commands, password) {
   return new Promise((resolve, reject) => {
     const child = spawn('sshpass', ['-e', 'sftp', '-o', 'StrictHostKeyChecking=accept-new',
-      '-o', 'ConnectTimeout=15', '-P', '22', '-b', '-', USER + '@' + HOST], {
+      '-o', 'BatchMode=no', '-o', 'ConnectTimeout=15', '-P', '22', '-b', '-', USER + '@' + HOST], {
       env: { ...process.env, SSHPASS: password }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '', stderr = '';
