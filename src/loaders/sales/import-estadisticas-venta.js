@@ -186,7 +186,7 @@ export async function run() {
     source: blobSource(file),
     sheet: SHEET_NAME,
     table: TABLE_NAME,
-    strategy: 'FULL_SNAPSHOT_REPLACE',
+    strategy: 'INCREMENTAL_ID_MERGE',
     rowsLoaded: parsed.rows.length,
     rowsExcludedByBrand,
     rowsExcludedByCustomerCategory,
