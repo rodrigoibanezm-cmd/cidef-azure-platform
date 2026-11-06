@@ -1,3 +1,4 @@
+import { refreshDealerSellout } from '../lib/data-floor/refreshDealerSellout.js';
 import { fileURLToPath } from 'node:url';
 import { getAzurePool } from '../lib/azure-postgres.js';
 
@@ -40,8 +41,9 @@ export async function syncCanonicalRvm({ apply = false, pool = getAzurePool() } 
     if (after.pending !== 0 || updated.rowCount !== before.pending) {
       throw new Error('RVM parity validation failed; rolling back');
     }
+    const sellout = await refreshDealerSellout((sql, params=[])=>client.query(sql,params).then(r=>r.rows));
     await client.query('COMMIT');
-    return { mode: 'apply', updated: updated.rowCount, before, after };
+    return { mode: 'apply', updated: updated.rowCount, before, after, sellout };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;

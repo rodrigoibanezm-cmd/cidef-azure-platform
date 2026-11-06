@@ -16,6 +16,8 @@ on:
       - 'test/forum-p1-semantics.test.js'
       - 'scripts/validate-projection-p1-contracts.js'
       - 'lib/mcp/server.js'
+      - 'lib/data-floor/registry.js'
+      - 'lib/data-floor/selloutCertifier.js'
       - 'scripts/validate-sales-financial-p1.js'
       - 'test/sales-p1-contract.test.js'
       - '.github/workflows/deploy-motor-test-azure.yml'
