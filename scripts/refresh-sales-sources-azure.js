@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { runSalesRefresh } from '../src/loaders/sales/refresh.js';
 import { validDate } from '../src/loaders/sales/source-io.js';
 import { closeAzurePool } from '../lib/azure-postgres.js';
+import { spawn } from 'node:child_process';
 
 export function requestedDates(argv) {
   const { values } = parseArgs({ args: argv, options: {
@@ -25,11 +26,22 @@ export async function main(argv = process.argv.slice(2)) {
   if (!url || !new URL(url).hostname.endsWith('.postgres.database.azure.com')) {
     throw new Error('AZURE_DATABASE_URL must point to PostgreSQL Azure; no database fallback');
   }
+  let refreshed;
   try {
-    return await runSalesRefresh({ dates, log: entry => console.log(JSON.stringify(entry)) });
+    refreshed = await runSalesRefresh({ dates, log: entry => console.log(JSON.stringify(entry)) });
   } finally {
     await closeAzurePool();
   }
+  // Publish only after a successful SALES load. This does not ingest FORUM files.
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['scripts/refresh-forum-ventas-snapshot-azure.js', '--publish-sales'], {
+      stdio: 'inherit', env: { ...process.env, FORUM_SNAPSHOT_PUBLISHER: 'azure-platform' },
+    });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => code === 0 ? resolve()
+      : reject(new Error('SALES_SNAPSHOT_NOT_PUBLISHED: ' + (signal || code))));
+  });
+  return refreshed;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
