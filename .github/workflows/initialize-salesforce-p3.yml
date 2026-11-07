@@ -1,0 +1,58 @@
+name: Initialize Salesforce MCP P3
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y postgresql-client
+
+      - name: Initialize existing P3 schema
+        shell: bash
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          [[ -n "$AZURE_DATABASE_URL" ]] || { echo "::error::Missing Production AZURE_DATABASE_URL"; exit 1; }
+          echo "::add-mask::$AZURE_DATABASE_URL"
+          psql "$AZURE_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          CREATE TABLE IF NOT EXISTS crm_runs (
+              run_id text PRIMARY KEY,
+              questions jsonb NOT NULL DEFAULT '[]',
+              status text NOT NULL,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now()
+          );
+          CREATE TABLE IF NOT EXISTS crm_evidence (
+              evidence_id uuid PRIMARY KEY,
+              run_id text NOT NULL REFERENCES crm_runs(run_id),
+              source text NOT NULL,
+              query_hash text NOT NULL,
+              source_version text NOT NULL,
+              payload jsonb NOT NULL,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (run_id, query_hash, source_version)
+          );
+          CREATE TABLE IF NOT EXISTS crm_events (
+              event_id uuid PRIMARY KEY,
+              run_id text NOT NULL REFERENCES crm_runs(run_id),
+              sequence_no bigint NOT NULL,
+              tool text NOT NULL,
+              input jsonb NOT NULL,
+              output jsonb NOT NULL,
+              evidence_ids jsonb NOT NULL DEFAULT '[]',
+              created_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (run_id, sequence_no)
+          );
+          CREATE INDEX IF NOT EXISTS crm_evidence_query_idx
+              ON crm_evidence(run_id, query_hash, created_at DESC);
+          COMMIT;
+          SQL
+          psql "$AZURE_DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('crm_runs','crm_evidence','crm_events') ORDER BY tablename"
