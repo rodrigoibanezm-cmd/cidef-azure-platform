@@ -1,0 +1,31 @@
+name: Configure Salesforce MCP PostgreSQL
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - name: Azure login via existing OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set Salesforce MCP PostgreSQL connection
+        shell: bash
+        env:
+          DB_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DB_URL" ]] || { echo "::error::Missing Production AZURE_DATABASE_URL"; exit 1; }
+          echo "::add-mask::$DB_URL"
+          az containerapp secret set -g rg-cidef-prod -n cidef-salesforce --secrets "azure-database-url=$DB_URL" -o none
+          az containerapp update -g rg-cidef-prod -n cidef-salesforce --set-env-vars AZURE_DATABASE_URL=secretref:azure-database-url -o none
+          az containerapp show -g rg-cidef-prod -n cidef-salesforce --query '{state:properties.provisioningState,ready:properties.latestReadyRevisionName}' -o json
