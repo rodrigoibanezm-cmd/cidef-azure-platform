@@ -89,7 +89,7 @@ if (process.argv[1]?.endsWith('/download-forum-sftp-azure.js')) {
       ...(error.message?.startsWith('SFTP failed') ? { detail: error.message } : {}),
       ...(error.code === 'ERR_ASSERTION' && error.message === 'FORUM_SFTP_PASSWORD and AZURE_STORAGE_CONNECTION_STRING required'
         ? { missing_env: ['FORUM_SFTP_PASSWORD', 'AZURE_STORAGE_CONNECTION_STRING'].filter(name => !process.env[name]) } : {}),
-      ...(error.code === 'ERR_ASSERTION' && /^Empty Forum CSV: (Cotizacion|Curse|Precurse)_Cidef_\\d{8}\\.csv$/.test(error.message)
+      ...(error.code === 'ERR_ASSERTION' && /^Empty Forum CSV: (Cotizacion|Curse|Precurse)_Cidef_\d{8}\.csv$/.test(error.message)
         ? { detail: error.message } : {}),
     }));
     process.exitCode = 1;
