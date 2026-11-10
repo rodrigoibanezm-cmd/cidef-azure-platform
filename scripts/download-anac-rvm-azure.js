@@ -1,6 +1,7 @@
 import https from 'node:https';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { parseArgs } from 'node:util';
+import { importAnacRvm } from '../lib/rvm/import-anac-json.js';
 
 const BASE = 'https://gestion.anac.cl:8006';
 const MAX_BYTES = 80 * 1024 * 1024;
@@ -66,12 +67,13 @@ export async function run(argv = process.argv.slice(2)) {
     blobHTTPHeaders: { blobContentType: 'application/json' },
     conditions: { ifNoneMatch: '*' },
   });
-  return { event: 'ANAC_JSON_SAVED', kind, year, month: kind === 'consolidated' ? month : null,
-    blob, bytes: bytes.length };
+  console.log(JSON.stringify({ event: 'ANAC_JSON_SAVED', kind, year,
+    month: kind === 'consolidated' ? month : null, blob, bytes: bytes.length }));
+  return importAnacRvm(bytes, { kind, year, month, blob });
 }
 
 if (process.argv[1]?.endsWith('/download-anac-rvm-azure.js')) {
   run().then(result => console.log(JSON.stringify(result)))
-    .catch(error => { console.error(JSON.stringify({ event: 'ANAC_DOWNLOAD_FAILED',
-      code: error.code || error.name, message: error.message, stage: 'anac_download' })); process.exitCode = 1; });
+    .catch(error => { console.error(JSON.stringify({ event: 'RVM_FAILED',
+      code: error.code || error.name, message: error.message, stage: 'anac_download_or_import' })); process.exitCode = 1; });
 }
