@@ -237,7 +237,7 @@ async function loadForumBacklog(fromDate) {
     files.get(date).add(match[1]);
   }
   const dates = [...files.keys()].sort();
-  assert.ok(dates.length, 'No FORUM files available from ' + fromDate);
+  if (!dates.length) return { status: 'NO_NEW_FORUM_SNAPSHOT_FILES', from_date: fromDate, completed_dates: [] };
   const completed = [];
   const lastDate = dates.at(-1);
   for (let day = fromDate; day <= lastDate; day = new Date(Date.parse(day + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10)) {
