@@ -73,5 +73,5 @@ export async function run(argv = process.argv.slice(2)) {
 if (process.argv[1]?.endsWith('/download-anac-rvm-azure.js')) {
   run().then(result => console.log(JSON.stringify(result)))
     .catch(error => { console.error(JSON.stringify({ event: 'ANAC_DOWNLOAD_FAILED',
-      code: error.code || error.message })); process.exitCode = 1; });
+      code: error.code || error.name, message: error.message, stage: 'anac_download' })); process.exitCode = 1; });
 }
