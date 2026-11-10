@@ -82,17 +82,24 @@ function parseCsv(buffer, type) {
   return rows;
 }
 async function insertRows(client, date, type, filename, rows) {
-  let inserted = 0;
+  let inserted = 0, updated = 0;
+  const columns = TARGET.filter(column => !['snapshot_date', 'source_type', 'numero_operacion'].includes(column));
+  const changes = columns.map(column => `forum_funnel_raw.${column} IS DISTINCT FROM excluded.${column}`).join(' OR ');
+  const assignments = columns.map(column => `${column}=excluded.${column}`).join(',');
   for (let start = 0; start < rows.length; start += BATCH_SIZE) {
     const values = []; let param = 1;
     const tuples = rows.slice(start, start + BATCH_SIZE).map(row => {
       const record = { snapshot_date: date, source_type: type, ...row, source_file: filename, load_kind: 'DAILY_SNAPSHOT' };
-      return `(${TARGET.map(column => { values.push(record[column] ?? null); return `$${param++}`; }).join(',')})`;
+      return `(${TARGET.map(column => { values.push(record[column] ?? null); return `${param++}`; }).join(',')})`;
     });
-    const result = await client.query(`INSERT INTO public.forum_funnel_raw (${TARGET.join(',')}) VALUES ${tuples.join(',')} ON CONFLICT (snapshot_date,source_type,numero_operacion) DO NOTHING`, values);
-    inserted += result.rowCount;
+    const result = await client.query(`INSERT INTO public.forum_funnel_raw (${TARGET.join(',')}) VALUES ${tuples.join(',')}
+      ON CONFLICT (snapshot_date,source_type,numero_operacion) DO UPDATE SET ${assignments}
+      WHERE ${changes}
+      RETURNING (xmax = 0) AS inserted`, values);
+    inserted += result.rows.filter(row => row.inserted).length;
+    updated += result.rows.filter(row => !row.inserted).length;
   }
-  return inserted;
+  return { inserted, updated };
 }
 
 function validDate(date) {
@@ -136,13 +143,15 @@ export async function loadForumDay({ date, container, pool } = {}) {
   }
   if (!pool) { requireAzure(); pool = getAzurePool(); }
   const client = await pool.connect();
-  let inserted = 0;
+  let inserted = 0, updated = 0;
   try {
     await client.query('BEGIN');
     // Also coordinates with writers that do not know this CLI; ordinary reads remain available.
     await client.query('LOCK TABLE public.forum_funnel_raw IN SHARE ROW EXCLUSIVE MODE');
     for (const source of sources) {
-      inserted += await insertRows(client, date, source.type, source.key, source.rows);
+      const changes = await insertRows(client, date, source.type, source.key, source.rows);
+      inserted += changes.inserted;
+      updated += changes.updated;
       const actual = await client.query(
         'SELECT numero_operacion::text AS id FROM public.forum_funnel_raw WHERE snapshot_date=$1::date AND source_type=$2',
         [date, source.type]);
@@ -153,7 +162,7 @@ export async function loadForumDay({ date, container, pool } = {}) {
       for (const id of expectedIds) assert.ok(actualIds.has(id), 'Missing Forum operation ' + id + ' in ' + source.type);
     }
     await client.query('COMMIT');
-    return { status: 'COMPLETE', mode: 'DAILY_SNAPSHOT', snapshot_date: date, inserted_rows: inserted,
+    return { status: 'COMPLETE', mode: 'DAILY_SNAPSHOT', snapshot_date: date, inserted_rows: inserted, updated_rows: updated,
       certification: sources.map(source => ({ source_type: source.type, source_file: source.key,
         source_etag: source.etag, rows: source.rows.length })) };
   } catch (error) {
