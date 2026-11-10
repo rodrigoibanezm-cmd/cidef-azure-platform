@@ -4,5 +4,5 @@ COPY package.json ./
 RUN npm install --omit=dev --ignore-scripts
 COPY lib ./lib
 COPY src/loaders/rvm ./src/loaders/rvm
-COPY scripts/refresh-rvm-azure.js ./scripts/
+COPY scripts/refresh-rvm-azure.js scripts/download-anac-rvm-azure.js ./scripts/
 CMD ["node", "scripts/refresh-rvm-azure.js"]
