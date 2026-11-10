@@ -41,12 +41,8 @@ try{
   const contracts={};
   for(const source of ['SALES','FORUM'])contracts[source]=await callCertified('data_describe',{run_id,source});
   context.engine=digest({engine,contracts});
-  // Pin the contracts observed during validation as well as the local source.
-  if(publish&&!salesPublish){
-    const attestation=JSON.parse(await readFile(new URL('../docs/forum-snapshot-parity.json',import.meta.url),'utf8'));
-    if(attestation.status!=='PASS'||attestation.engine_signature!==context.engine)throw new Error('INCREMENTAL_LIVE_PARITY_REQUIRED');
-    publicationAuthorized=true;
-  }
+  // Both publication entry points require live parity against the current
+  // P1 contracts, instead of a precomputed attestation absent from the image.
   const cached=(await client.query("SELECT period,network,dimension,payload,sales_cutoff::text,forum_cutoff::text FROM forum_ventas_snapshot_v01 WHERE dimension='BUNDLE' AND period LIKE $1 ORDER BY network,period",[year+'-%'])).rows;
   const cache=indexCache(cached),dealerIdentities=await loadDealerIdentities(client);
   const metrics=[];
@@ -59,7 +55,7 @@ try{
     console.log(JSON.stringify({event:'SNAPSHOT_EXECUTION',...m}));return result;
   }
   let result;
-  if(compare||salesPublish){
+  if(compare||publish){
     // Build a fresh independent full candidate, then exercise the warm cache
     // and a forced SALES refresh of the open month using REAL MCP responses.
     const full=await generate('full',context,{forceFull:true});
@@ -85,7 +81,7 @@ try{
     comparisonReport=report;
     // SALES publication needs no precomputed attestation: the live full/warm/changed
     // parity checks above must pass against the current certified P1 contracts.
-    if(salesPublish)publicationAuthorized=true;
+    if(publish)publicationAuthorized=true;
   }else{
     console.log(JSON.stringify({event:'SNAPSHOT_PLAN',dependency_ms,plan:inspectPlan(context,cache,forceFull)}));
     await state({status:'BUILDING',source_signature:context.guard,sales_cutoff:sourceCutoffs.sales,forum_cutoff:sourceCutoffs.forum,run_id});
