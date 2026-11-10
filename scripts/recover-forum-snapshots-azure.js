@@ -210,12 +210,47 @@ try {
 } finally { await closeAzurePool(); }
 }
 
+async function loadForumBacklog(fromDate) {
+  const connection = process.env.AZURE_STORAGE_CONNECTION_STRING;
+  assert.ok(connection, 'AZURE_STORAGE_CONNECTION_STRING is required');
+  const container = BlobServiceClient.fromConnectionString(connection)
+    .getContainerClient(process.env.AZURE_CONTAINER || 'cidef');
+  const files = new Map();
+  const pattern = /^Forum\/(Cotizacion|Precurse|Curse)_Cidef_(\d{8})\.csv$/;
+  for await (const blob of container.listBlobsFlat({ prefix: 'Forum/' })) {
+    const match = blob.name.match(pattern);
+    if (!match) continue;
+    const date = match[2].replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+    if (date < fromDate || !validDate(date)) continue;
+    if (!files.has(date)) files.set(date, new Set());
+    files.get(date).add(match[1]);
+  }
+  const dates = [...files.keys()].sort();
+  assert.ok(dates.length, 'No FORUM files available from ' + fromDate);
+  const completed = [];
+  for (const date of dates) {
+    if (files.get(date).size !== 3) {
+      throw new Error('Incomplete FORUM files for ' + date + '; last completed: ' + (completed.at(-1) || 'none'));
+    }
+    try {
+      const result = await loadForumDay({ date, container });
+      completed.push(date);
+      console.log(JSON.stringify(result));
+    } catch (error) {
+      throw new Error('FORUM date ' + date + ' failed after ' + completed.length + ' completed: ' + error.message);
+    }
+  }
+  return { status: 'FORUM_BACKLOG_COMPLETE', from_date: fromDate, completed_dates: completed };
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const daily = argv.length === 2 && argv[0] === '--date';
-  assert.ok(daily || argv.length === 1 && !argv[0].startsWith('-'), 'Use --date YYYY-MM-DD or a local recovery manifest');
-  if (daily) assert.ok(validDate(argv[1]), 'A valid YYYY-MM-DD Forum date is required');
-  if (daily) requireAzure();
-  try { return daily ? await loadForumDay({ date: argv[1] }) : await recoverManifest(argv[0]); }
+  const backlog = argv.length === 2 && argv[0] === '--from-date';
+  assert.ok(daily || backlog || argv.length === 1 && !argv[0].startsWith('-'),
+    'Use --date YYYY-MM-DD, --from-date YYYY-MM-DD or a local recovery manifest');
+  if (daily || backlog) assert.ok(validDate(argv[1]), 'A valid YYYY-MM-DD Forum date is required');
+  if (daily || backlog) requireAzure();
+  try { return backlog ? await loadForumBacklog(argv[1]) : daily ? await loadForumDay({ date: argv[1] }) : await recoverManifest(argv[0]); }
   finally { await closeAzurePool(); }
 }
 
