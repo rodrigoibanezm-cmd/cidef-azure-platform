@@ -90,7 +90,7 @@ async function insertRows(client, date, type, filename, rows) {
     const values = []; let param = 1;
     const tuples = rows.slice(start, start + BATCH_SIZE).map(row => {
       const record = { snapshot_date: date, source_type: type, ...row, source_file: filename, load_kind: 'DAILY_SNAPSHOT' };
-      return `(${TARGET.map(column => { values.push(record[column] ?? null); return `${param++}`; }).join(',')})`;
+      return `(${TARGET.map(column => { values.push(record[column] ?? null); return `$${param++}`; }).join(',')})`;
     });
     const result = await client.query(`INSERT INTO public.forum_funnel_raw (${TARGET.join(',')}) VALUES ${tuples.join(',')}
       ON CONFLICT (snapshot_date,source_type,numero_operacion) DO UPDATE SET ${assignments}
