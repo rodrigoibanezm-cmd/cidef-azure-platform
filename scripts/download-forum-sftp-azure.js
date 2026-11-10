@@ -48,31 +48,36 @@ export async function downloadForumSftp() {
     byDate.get(date).add(type);
   }
   const ready = remote.filter(name => TYPES.every(type => byDate.get(name.match(FILE)[2]).has(type)));
-  const pending = [];
-  for (const name of ready) {
-    const blob = container.getBlockBlobClient('Forum/' + name);
-    if (!(await inStage('blob_check', () => blob.exists()))) pending.push(name);
-  }
   const dir = await mkdtemp(path.join(os.tmpdir(), 'forum-sftp-'));
-  const downloaded = [];
+  const downloaded = [], updated = [];
+  let pending = 0;
   try {
-    for (const name of pending) {
+    for (const name of ready) {
       const destination = path.join(dir, name);
       await inStage('sftp_download', () => sftp(['get /cidef/' + name + ' ' + destination], password));
       const bytes = await readFile(destination);
       assert.ok(bytes.length, 'Empty Forum CSV: ' + name);
       const blob = container.getBlockBlobClient('Forum/' + name);
-      try {
+      let properties;
+      try { properties = await inStage('blob_check', () => blob.getProperties()); }
+      catch (error) { if (error.statusCode !== 404) throw error; }
+      if (!properties) {
+        pending++;
         await inStage('blob_upload', () => blob.uploadData(bytes, { conditions: { ifNoneMatch: '*' },
           blobHTTPHeaders: { blobContentType: 'text/csv' } }));
         downloaded.push(name);
-      } catch (error) {
-        if (error.statusCode !== 409 && error.statusCode !== 412) throw error;
+        continue;
       }
+      const existing = await inStage('blob_check', () =>
+        blob.downloadToBuffer(undefined, undefined, { conditions: { ifMatch: properties.etag } }));
+      if (bytes.equals(existing)) continue;
+      await inStage('blob_upload', () => blob.uploadData(bytes, { conditions: { ifMatch: properties.etag },
+        blobHTTPHeaders: { blobContentType: 'text/csv' } }));
+      updated.push(name);
     }
   } finally { await rm(dir, { recursive: true, force: true }); }
-  return { status: 'SFTP_MIRRORED', available: remote.length, pending: pending.length,
-    downloaded, incomplete_dates: [...byDate].filter(([, types]) => types.size !== 3).map(([date]) => date) };
+  return { status: 'SFTP_MIRRORED', available: remote.length, pending, downloaded, updated,
+    incomplete_dates: [...byDate].filter(([, types]) => types.size !== 3).map(([date]) => date) };
 }
 
 if (process.argv[1]?.endsWith('/download-forum-sftp-azure.js')) {
