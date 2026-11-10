@@ -50,6 +50,7 @@ function datetime(value, column, line, preserveInvalid = false) {
 }
 function parseCsv(buffer, type) {
   const expected = SOURCE_COLUMNS[type]; assert.ok(expected, `Unsupported FORUM source type: ${type}`);
+  if (buffer.length === 0) return [];
   const matrix = csvMatrix(buffer); assert.ok(matrix.length, `FORUM ${type} CSV is empty`);
   const headers = matrix[0].map(value => value.trim());
   assert.deepEqual(headers, expected, `FORUM ${type} CSV schema mismatch`);
@@ -133,7 +134,7 @@ export async function loadForumDay({ date, container, pool } = {}) {
     const matches = objects.filter(name => path.posix.basename(name) === filename);
     assert.equal(matches.length, 1, `Expected exactly one ${type} CSV for ${date}`);
     const key = matches[0], blob = container.getBlobClient(key), properties = await blob.getProperties();
-    assert.ok(properties.etag && properties.contentLength > 0, `Empty or unversioned ${type} CSV`);
+    assert.ok(properties.etag, `Unversioned ${type} CSV`);
     sources.push({ type, key, blob, etag: properties.etag });
   }
   // Parse all three original interfaces before acquiring a database connection.
@@ -149,6 +150,7 @@ export async function loadForumDay({ date, container, pool } = {}) {
     // Also coordinates with writers that do not know this CLI; ordinary reads remain available.
     await client.query('LOCK TABLE public.forum_funnel_raw IN SHARE ROW EXCLUSIVE MODE');
     for (const source of sources) {
+      if (source.rows.length === 0) continue; // No movements; preserve existing database rows.
       const changes = await insertRows(client, date, source.type, source.key, source.rows);
       inserted += changes.inserted;
       updated += changes.updated;
