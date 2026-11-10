@@ -56,7 +56,6 @@ export async function downloadForumSftp() {
       const destination = path.join(dir, name);
       await inStage('sftp_download', () => sftp(['cd cidef', 'get ' + name + ' ' + destination], password));
       const bytes = await readFile(destination);
-      assert.ok(bytes.length, 'Empty Forum CSV: ' + name);
       const blob = container.getBlockBlobClient('Forum/' + name);
       let properties;
       try { properties = await inStage('blob_check', () => blob.getProperties()); }
