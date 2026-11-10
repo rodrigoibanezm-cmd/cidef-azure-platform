@@ -228,9 +228,11 @@ async function loadForumBacklog(fromDate) {
   const dates = [...files.keys()].sort();
   assert.ok(dates.length, 'No FORUM files available from ' + fromDate);
   const completed = [];
-  for (const date of dates) {
-    if (files.get(date).size !== 3) {
-      throw new Error('Incomplete FORUM files for ' + date + '; last completed: ' + (completed.at(-1) || 'none'));
+  const lastDate = dates.at(-1);
+  for (let day = fromDate; day <= lastDate; day = new Date(Date.parse(day + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10)) {
+    const date = day;
+    if (!files.has(date) || files.get(date).size !== 3) {
+      throw new Error('Missing or incomplete FORUM files for ' + date + '; last completed: ' + (completed.at(-1) || 'none'));
     }
     try {
       const result = await loadForumDay({ date, container });
