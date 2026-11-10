@@ -38,7 +38,7 @@ export async function downloadForumSftp() {
   assert.ok(password && connection, 'FORUM_SFTP_PASSWORD and AZURE_STORAGE_CONNECTION_STRING required');
   const container = BlobServiceClient.fromConnectionString(connection)
     .getContainerClient(process.env.AZURE_CONTAINER || 'cidef');
-  const listing = await inStage('sftp_list', () => sftp(['ls -1 /cidef'], password));
+  const listing = await inStage('sftp_list', () => sftp(['cd cidef', 'ls -1'], password));
   const remote = [...new Set(listing.split(/\r?\n/).map(s => s.trim())
     .filter(name => FILE.test(name)))].sort();
   const byDate = new Map();
@@ -54,7 +54,7 @@ export async function downloadForumSftp() {
   try {
     for (const name of ready) {
       const destination = path.join(dir, name);
-      await inStage('sftp_download', () => sftp(['get /cidef/' + name + ' ' + destination], password));
+      await inStage('sftp_download', () => sftp(['cd cidef', 'get ' + name + ' ' + destination], password));
       const bytes = await readFile(destination);
       assert.ok(bytes.length, 'Empty Forum CSV: ' + name);
       const blob = container.getBlockBlobClient('Forum/' + name);
