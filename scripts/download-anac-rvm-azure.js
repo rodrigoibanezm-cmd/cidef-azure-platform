@@ -54,7 +54,7 @@ export async function run(argv = process.argv.slice(2)) {
   const { kind, year, month } = options(argv);
   const path = kind === 'preliminary' ? '/anac/rvm/semanal' :
     '/anac/rvm/cierre/' + year + '/' + String(month).padStart(2, '0');
-  const bytes = await fetchJson(path);
+  const bytes = await fetchJson(path).catch(error => { error.stage = 'anac_download'; throw error; });
   const connection = process.env.AZURE_STORAGE_CONNECTION_STRING;
   if (!connection) throw Error('Missing Azure Blob connection');
   const container = BlobServiceClient.fromConnectionString(connection)
@@ -66,14 +66,15 @@ export async function run(argv = process.argv.slice(2)) {
   await container.getBlockBlobClient(blob).uploadData(bytes, {
     blobHTTPHeaders: { blobContentType: 'application/json' },
     conditions: { ifNoneMatch: '*' },
-  });
+  }).catch(error => { error.stage = 'azure_blob'; throw error; });
   console.log(JSON.stringify({ event: 'ANAC_JSON_SAVED', kind, year,
     month: kind === 'consolidated' ? month : null, blob, bytes: bytes.length }));
-  return importAnacRvm(bytes, { kind, year, month, blob });
+  return importAnacRvm(bytes, { kind, year, month, blob })
+    .catch(error => { error.stage = 'postgres_import'; throw error; });
 }
 
 if (process.argv[1]?.endsWith('/download-anac-rvm-azure.js')) {
   run().then(result => console.log(JSON.stringify(result)))
     .catch(error => { console.error(JSON.stringify({ event: 'RVM_FAILED',
-      code: error.code || error.name, message: error.message, stage: 'anac_download_or_import' })); process.exitCode = 1; });
+      code: error.code || error.name, message: error.message, stage: error.stage || 'rvm_configuration' })); process.exitCode = 1; });
 }
