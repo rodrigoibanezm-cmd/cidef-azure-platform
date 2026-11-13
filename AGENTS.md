@@ -6,7 +6,9 @@
 3. Buscar y reutilizar primero lo existente; no reinventar la rueda.
 4. Antes de modificar código o arquitectura, evaluar si el cambio es necesario y si existe una alternativa más simple.
 
-Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related tasks before each task. Inspect current code/state; do not assume docs are live telemetry.
+Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related tasks before each task.
+
+**Motor performance work:** read `docs/MOTOR-LATENCY-IMPROVEMENT-LOG.md` before diagnosing, optimizing, or deploying P1/P2/P3/P4. It records the measured baseline, commits, deployment, and pending real-latency verification. Inspect current code/state; do not assume docs are live telemetry.
 
 - GOAL: replace Vercel + Neon with **one production stack on Azure**. Legacy runs only until cutover; never build permanent dual-stack.
 - LEGACY (read/reference only): `cidef-data-loader` on Neon/Vercel. Do not modify, deploy, or disable unless explicitly authorized.
