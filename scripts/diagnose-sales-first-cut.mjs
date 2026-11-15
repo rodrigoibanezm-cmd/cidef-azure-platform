@@ -9,6 +9,7 @@ import { loadSalesAttributes } from '../lib/data-floor/sales/attributes.js';
 import { customGptDb } from '../lib/custom-gpt/db.js';
 import { loadVentasRows } from '../lib/ventas/loadVentasRows.js';
 
+export async function runSalesSelectiveProbe() {
 const filters = {commercial_universe:'OWN_STORES',brand_id:89,model_id:28,
   store_id:4,date_from:'2026-08-01',date_to:'2026-08-31'};
 const measurements = [];
@@ -116,7 +117,7 @@ const expected=new Set(baseline.filtered.map(signature));
 const actual=new Set(selective.filtered.map(signature));
 const missing=[...expected].filter(v=>!actual.has(v));
 const extra=[...actual].filter(v=>!expected.has(v));
-console.log(JSON.stringify({case:'FOTON G7 / Pajaritos / agosto 2026',
+const result={case:'FOTON G7 / Pajaritos / agosto 2026',
   candidate_vins:candidateVins.size,related_raw_rows:related.length,
   full_raw_rows:fullRows.length,
   certified_vins:baseline.filtered.length,selective_vins:selective.filtered.length,
@@ -135,5 +136,12 @@ console.log(JSON.stringify({case:'FOTON G7 / Pajaritos / agosto 2026',
     sales_sellers:attributes.sellers.size
   },
   timings:measurements,
-  caveat:'Selected records and commercial identities compared; global source coverage cannot be certified from a partial source.'},null,2));
-if(missing.length||extra.length||selective.filtered.length!==baseline.filtered.length)process.exitCode=1;
+  caveat:'Selected records and commercial identities compared; global source coverage cannot be certified from a partial source.'};
+return result;
+}
+
+if (process.argv[1]?.endsWith('/diagnose-sales-first-cut.mjs')) {
+  const result=await runSalesSelectiveProbe();
+  console.log(JSON.stringify(result,null,2));
+  if(result.missing_records||result.extra_records||result.certified_vins!==result.selective_vins)process.exitCode=1;
+}
