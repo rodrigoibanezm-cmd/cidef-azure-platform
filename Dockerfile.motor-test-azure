@@ -4,6 +4,7 @@ WORKDIR /app
 COPY motor-test-azure/package.json ./package.json
 RUN npm install --omit=dev --no-audit --no-fund
 COPY lib ./lib
+COPY scripts/prototype-sales-sql-recognition.mjs ./scripts/prototype-sales-sql-recognition.mjs
 COPY motor-test-azure/server.js ./motor-test-azure/server.js
 COPY motor-test-azure/como-vamos.js ./motor-test-azure/como-vamos.js
 USER node
