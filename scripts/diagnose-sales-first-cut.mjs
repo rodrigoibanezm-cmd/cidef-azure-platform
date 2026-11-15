@@ -61,8 +61,11 @@ const related=await time('fetch_related_rows',()=>queryDb(
     AND btrim(nro_vin_chasis) = ANY($1::text[])`,[[...candidateVins]]));
 const [commercialMap,historicalSalesChannelMap,dealerBuyerMap,resources,attributes]=
   await time('identity_resources',()=>Promise.all([
-    loadCommercialIdentityMap(),loadHistoricalSalesChannelMap(),loadDealerBuyerMap(),
-    loadVentasUniverseResources(),loadSalesAttributes()
+    time('commercial_identity_map',()=>loadCommercialIdentityMap()),
+    time('historical_channel_map',()=>loadHistoricalSalesChannelMap()),
+    time('dealer_buyer_map',()=>loadDealerBuyerMap()),
+    time('universe_resources',()=>loadVentasUniverseResources()),
+    time('sales_attributes',()=>loadSalesAttributes())
   ]));
 const prepared=await time('candidate_preparation',async()=>createSalesPreparation({
   rows:related,commercialMap,historicalSalesChannelMap,dealerBuyerMap,resources,attributes
