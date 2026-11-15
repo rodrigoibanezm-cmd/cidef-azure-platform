@@ -4,6 +4,7 @@ import { closeAzurePool, getAzurePool } from '../lib/azure-postgres.js';
 import { createMcpServer } from '../lib/mcp/server.js';
 import { observePrecurseSnapshotBundle } from '../lib/data-floor/forum/observations.js';
 import { buildComoVamos } from './como-vamos.js';
+import { runSalesSelectiveProbe } from '../scripts/diagnose-sales-first-cut.mjs';
 
 const PORT = Number(process.env.PORT || 3000);
 const MCP_PATH = '/api/mcp';
@@ -83,6 +84,15 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   const server = createMcpServer();
+  server.registerTool('sales_selective_probe', {
+    title: 'Experimental SALES selective SQL probe',
+    description: 'Read-only experimental benchmark for FOTON G7, Pajaritos, August 2026. Compares selective and existing P1 results and timings. NOT certified P1 evidence.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async () => {
+    const out = await runSalesSelectiveProbe();
+    return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
+  });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
     transport.close().catch(() => {});
