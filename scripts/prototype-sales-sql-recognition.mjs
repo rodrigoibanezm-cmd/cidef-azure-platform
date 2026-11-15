@@ -34,7 +34,7 @@ WITH source AS (
  SELECT *, day_text || ' ' ||
    lpad(split_part(time_text,':',1),2,'0') || ':' ||
    lpad(split_part(time_text,':',2),2,'0') || ':' ||
-   lpad(nullif(split_part(time_text,':',3),'')::text,2,'0') AS date_text
+   lpad(coalesce(nullif(split_part(time_text,':',3),''),'00'),2,'0') AS date_text
  FROM normalized
 ), parsed AS (
  SELECT *, CASE
