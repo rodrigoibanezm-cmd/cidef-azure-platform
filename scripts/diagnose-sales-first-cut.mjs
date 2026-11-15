@@ -2,6 +2,7 @@
 import { performance } from 'node:perf_hooks';
 import { queryDb } from '../lib/neon.js';
 import { dataset, field } from '../lib/data-floor/sales/dataset.js';
+import { calculateVentasContext } from '../lib/ventas/buildVentasContext.js';
 
 const filters = {commercial_universe:'OWN_STORES',brand_id:89,model_id:28,
   store_id:4,date_from:'2026-08-01',date_to:'2026-08-31'};
@@ -44,20 +45,29 @@ WITH candidate AS MATERIALIZED (
      ))
 )
 SELECT vin FROM candidate`;
-const [raw]=await time('raw_count',()=>queryDb(
-  "SELECT count(*)::int n FROM ventas_raw WHERE btrim(categoria_cliente) IN ('Cliente General','Concesionaria')"));
+const totalStart=performance.now();
 const candidates=await time('candidate_sql',()=>queryDb(sql,[dateRe,filters.store_id,filters.model_id,filters.brand_id]));
 const candidateVins=new Set(candidates.map(r=>String(r.vin).trim()));
-const [related]=await time('related_raw_count',()=>queryDb(
-  `SELECT count(*)::int n FROM ventas_raw
-   WHERE btrim(categoria_cliente) IN ('Cliente General','Concesionaria')
-     AND btrim(nro_vin_chasis) = ANY($1::text[])`,[[...candidateVins]]));
-const baseline=await time('p1_certification',()=>dataset({filters}));
-const certified=baseline.filtered.map(row=>String(field(row,'vin')??'').trim());
-const missed=[...new Set(certified)].filter(vin=>!candidateVins.has(vin));
-const result={case:'FOTON G7 / Pajaritos / agosto 2026',raw_rows:raw.n,
-  candidate_vins:candidateVins.size,related_raw_rows:related.n,certified_vins:certified.length,
-  missed_certified_vins:missed.length,missing_vin_examples:missed.slice(0,10),
-  warning:'Candidate SQL is experimental; matching VINs alone does not certify coverage or equivalence.'};
-console.log(JSON.stringify(result,null,2));
-if(missed.length||certified.some(vin=>!vin))process.exitCode=1;
+const related=await time('fetch_related_rows',()=>queryDb(
+  `SELECT id,nro_operacion,razon_social,cliente,articulo,desc_articulo,
+  nro_vin_chasis,nombre_usuario,fecha_factura,precio_vta,precio_vta_pesos_con_iva,
+  id_sucursal_vta,desc_sucursal_vta,id_mae_marca,desc_mae_marca,nro_propuesta,
+  factura,nro_factura,categoria_cliente,entidad_financiera
+  FROM ventas_raw
+  WHERE btrim(categoria_cliente) IN ('Cliente General','Concesionaria')
+    AND btrim(nro_vin_chasis) = ANY($1::text[])`,[[...candidateVins]]));
+const context=await time('candidate_recognition',async()=>calculateVentasContext(related,{cutoffDate:filters.date_to}));
+const selectiveMs=Math.round(performance.now()-totalStart);
+const fullStart=performance.now();
+const baseline=await time('full_p1_dataset',()=>dataset({filters}));
+const fullMs=Math.round(performance.now()-fullStart);
+const certified=new Set(baseline.filtered.map(row=>String(field(row,'vin')??'').trim()));
+const recognized=new Set(context.recognizedSales.map(row=>String(row.vin??'').trim()));
+const missed=[...certified].filter(vin=>!recognized.has(vin));
+console.log(JSON.stringify({case:'FOTON G7 / Pajaritos / agosto 2026',
+  candidate_vins:candidateVins.size,related_raw_rows:related.length,
+  certified_vins:certified.size,missed_certified_vins:missed.length,
+  missing_vin_examples:missed.slice(0,10),selective_pipeline_ms:selectiveMs,
+  full_p1_dataset_ms:fullMs,
+  caveat:'Selective path only recognizes candidate VINs, not commercial identities, filters or full P1 quality.'},null,2));
+if(missed.length)process.exitCode=1;
