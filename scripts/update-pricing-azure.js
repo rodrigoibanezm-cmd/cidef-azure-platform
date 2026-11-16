@@ -1,19 +1,22 @@
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { parsePriceWorkbook } from './pricing/price-list.js';
 import { normalizePriceRecord } from './pricing/price-normalizer.js';
 import { run as importPrices, auditNormalizedRecords } from './pricing/import-lista-precios-azure.js';
 import { priceEpisodeCanonicalizerV01 } from './pricing/price-episode-canonicalizer-v01.js';
 import { closeAzurePool, getAzurePool } from '../lib/azure-postgres.js';
 
-const expectedDate = '2026-10-14';
 const inputPath = process.argv[2];
 if (!inputPath) throw new Error('Usage: node scripts/update-pricing-azure.js <downloaded-xlsb-path>');
 const sourceFile = path.basename(inputPath);
-if (!/LISTA.*PRECIOS.*14[-_ ]?10[-_ ]?2026/i.test(sourceFile.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) {
-  throw new Error(`Unexpected pricing source file name: ${sourceFile}`);
+const match = sourceFile.match(/(\d{2})[-_](\d{2})[-_](\d{4})\.xlsb$/i);
+if (!match) throw new Error(`Pricing filename must end in DD-MM-YYYY.xlsb: ${sourceFile}`);
+const expectedDate = `${match[3]}-${match[2]}-${match[1]}`;
+if (!Number.isFinite(Date.parse(expectedDate)) || new Date(expectedDate).toISOString().slice(0, 10) !== expectedDate) {
+  throw new Error(`Invalid pricing date in filename: ${sourceFile}`);
 }
 
-const { records } = parsePriceWorkbook(await import('node:fs/promises').then(({ readFile }) => readFile(inputPath)), sourceFile);
+const { records } = parsePriceWorkbook(await readFile(inputPath), sourceFile);
 const operationalRecords = records.filter((row) => String(row.source_sheet ?? '').trim().toUpperCase() !== 'FOTON');
 const normalized = operationalRecords.map(normalizePriceRecord).filter(Boolean);
 const audit = auditNormalizedRecords(operationalRecords, normalized);
@@ -21,96 +24,36 @@ if (audit.blockingRejectedRows > 0) {
   throw new Error(`PRICING_SOURCE_VALIDATION_FAILED: ${audit.blockingRejectedRows} commercial rows rejected; no Azure writes performed`);
 }
 const current = normalized.filter((row) => row.vigencia_desde === expectedDate);
-if (!current.length) throw new Error(`No normalized pricing rows for ${expectedDate}`);
-const dongfeng007 = current.find((row) => row.marca === 'DONGFENG' && row.modelo === '007' && row.version === '007 Automática');
-const dongfeng008 = current.find((row) => row.marca === 'DONGFENG' && row.modelo === '008' && row.version === '008 Automática');
-if (!dongfeng007 || dongfeng007.precio_lista !== 27890000 || dongfeng007.bono_forum !== 900000 || dongfeng007.precio_efectivo_final_sin_iva !== 23990000) {
-  throw new Error('DONGFENG 007 source row did not match the certified 2026-10-14 values');
-}
-if (!dongfeng008 || dongfeng008.precio_lista !== 32590000 || dongfeng008.bono_forum !== 1000000 || dongfeng008.precio_efectivo_final_sin_iva !== 28990000) {
-  throw new Error('DONGFENG 008 source row did not match the certified 2026-10-14 values');
-}
+if (!current.length) throw new Error(`No normalized pricing rows with vigencia ${expectedDate} in ${sourceFile}`);
+const future = normalized.filter((row) => row.vigencia_desde > expectedDate);
+if (future.length) throw new Error(`Pricing file has ${future.length} rows dated after filename vigencia ${expectedDate}`);
 
 const pool = getAzurePool();
 const priorPricingResult = await pool.query(
-  `SELECT COUNT(*)::int AS history_rows,
-          COUNT(DISTINCT price_version_id)::int AS versions,
-          COUNT(DISTINCT (price_version_id, source_sheet, source_row))::int AS source_rows
-     FROM price_history
-    WHERE source_file=$1 AND vigencia_desde=$2::date`,
+  `SELECT COUNT(*)::int AS history_rows, COUNT(DISTINCT price_version_id)::int AS versions
+   FROM price_history WHERE source_file=$1 AND vigencia_desde=$2::date`,
   [sourceFile, expectedDate],
 );
-const priorDongfengResult = await pool.query(
-  `SELECT pv.modelo,COALESCE(pv.version_raw,pv.version) AS version,
-          ph.precio_lista,ph.bono_forum,ph.precio_efectivo_final_sin_iva,
-          ph.source_sheet,ph.source_row
-     FROM price_history ph
-     JOIN price_versions pv USING(price_version_id)
-    WHERE ph.source_file=$1 AND ph.vigencia_desde=$2::date
-      AND pv.marca='DONGFENG' AND pv.modelo IN ('007','008')
-    ORDER BY pv.modelo,ph.source_sheet,ph.source_row`,
-  [sourceFile, expectedDate],
-);
-const pricingPresentBefore = {
-  ...priorPricingResult.rows[0],
-  dongfeng_007_008: priorDongfengResult.rows,
-};
-
+const pricingPresentBefore = priorPricingResult.rows[0];
 const importResult = await importPrices({ workbook_files: [{ name: sourceFile, path: inputPath }] });
 const afterPricingResult = await pool.query(
-  `SELECT COUNT(*)::int AS history_rows,
-          COUNT(DISTINCT price_version_id)::int AS versions,
-          COUNT(DISTINCT (price_version_id, source_sheet, source_row))::int AS source_rows
-     FROM price_history
-    WHERE source_file=$1 AND vigencia_desde=$2::date`,
+  `SELECT COUNT(*)::int AS history_rows, COUNT(DISTINCT price_version_id)::int AS versions
+   FROM price_history WHERE source_file=$1 AND vigencia_desde=$2::date`,
   [sourceFile, expectedDate],
 );
-const afterDongfengResult = await pool.query(
-  `SELECT pv.modelo,COALESCE(pv.version_raw,pv.version) AS version,
-          ph.precio_lista,ph.bono_forum,ph.precio_efectivo_final_sin_iva,
-          ph.source_sheet,ph.source_row
-     FROM price_history ph
-     JOIN price_versions pv USING(price_version_id)
-    WHERE ph.source_file=$1 AND ph.vigencia_desde=$2::date
-      AND pv.marca='DONGFENG' AND pv.modelo IN ('007','008')
-    ORDER BY pv.modelo,ph.source_sheet,ph.source_row`,
-  [sourceFile, expectedDate],
-);
-const pricingAfterImport = {
-  ...afterPricingResult.rows[0],
-  dongfeng_007_008: afterDongfengResult.rows,
-};
-const parityRowsResult = await pool.query(
-  `SELECT pv.marca,pv.modelo,COALESCE(pv.version_raw,pv.version) AS version,
-          ph.vigencia_desde::text AS vigencia_desde,ph.source_sheet,ph.source_row::text AS source_row,
-          ph.precio_neto::text AS precio_neto,ph.precio_lista::text AS precio_lista,
-          ph.precio_con_iva::text AS precio_con_iva,ph.bono_cidef::text AS bono_cidef,
-          ph.bono_forum::text AS bono_forum,ph.bono_mes::text AS bono_mes,
-          ph.precio_efectivo_pre_mes_sin_iva::text AS precio_efectivo_pre_mes_sin_iva,
-          ph.precio_efectivo_pre_mes_con_iva::text AS precio_efectivo_pre_mes_con_iva,
-          ph.precio_efectivo_final_sin_iva::text AS precio_efectivo_final_sin_iva,
-          ph.precio_efectivo_final_con_iva::text AS precio_efectivo_final_con_iva
-     FROM price_history ph
-     JOIN price_versions pv USING(price_version_id)
-    WHERE ph.vigencia_desde=$1::date AND ph.source_file=$2
-    ORDER BY pv.marca,pv.modelo,COALESCE(pv.version_raw,pv.version),ph.source_sheet,ph.source_row`,
-  [expectedDate,sourceFile],
-);
+const pricingAfterImport = afterPricingResult.rows[0];
 console.log(JSON.stringify({
-  stage:'price_history_import_committed',
-  source_file:sourceFile,
-  vigencia:expectedDate,
-  pricing_present_before:pricingPresentBefore,
-  pricing_after_import:pricingAfterImport,
-  rows_staged:importResult.rowsStaged,
-  rows_normalized:importResult.rowsNormalized,
-  price_versions_touched:importResult.versionsTouched,
-  price_history_inserted:importResult.historyInserted,
-  azure_parity_rows:parityRowsResult.rows,
-},null,2));
-console.log('AZURE_PRICING_PARITY_JSON_BEGIN');
-console.log(JSON.stringify(parityRowsResult.rows));
-console.log('AZURE_PRICING_PARITY_JSON_END');
+  stage: 'price_history_import_committed',
+  source_file: sourceFile,
+  vigencia: expectedDate,
+  pricing_present_before: pricingPresentBefore,
+  pricing_after_import: pricingAfterImport,
+  rows_staged: importResult.rowsStaged,
+  rows_normalized: importResult.rowsNormalized,
+  price_versions_touched: importResult.versionsTouched,
+  price_history_inserted: importResult.historyInserted,
+}, null, 2));
+
 const masterText = (value) => String(value ?? '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
 const normalizeProductText = (value) => String(value ?? '')
   .normalize('NFD')
