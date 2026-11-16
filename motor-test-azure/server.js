@@ -155,7 +155,7 @@ const httpServer = http.createServer(async (req, res) => {
     const conditions = [
       "btrim(v.categoria_cliente) IN ('Cliente General','Concesionaria')",
       "nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL",
-      "CASE WHEN btrim(v.fecha_factura) ~ '^\\\\d{4}-\\\\d{2}-\\\\d{2}' THEN left(btrim(v.fecha_factura),10)::date WHEN btrim(v.fecha_factura) ~ '^\\\\d{1,2}/\\\\d{1,2}/\\\\d{4}' THEN to_date(split_part(btrim(v.fecha_factura),' ',1),'DD/MM/YYYY') ELSE NULL END BETWEEN $1::date AND $2::date",
+      "CASE WHEN btrim(v.fecha_factura) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN left(btrim(v.fecha_factura),10)::date WHEN btrim(v.fecha_factura) ~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}' THEN to_date(split_part(btrim(v.fecha_factura),' ',1),'DD/MM/YYYY') ELSE NULL END BETWEEN $1::date AND $2::date",
     ];
     if (filters.store_id != null) {
       conditions.push(`(EXISTS (SELECT 1 FROM sucursales_master s WHERE s.sucursal_id = ${filters.store_id} AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text)) OR EXISTS (SELECT 1 FROM vehiculo_canonico vc WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = ${filters.store_id}))`);
