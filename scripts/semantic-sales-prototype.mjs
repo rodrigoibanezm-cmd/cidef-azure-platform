@@ -1,0 +1,54 @@
+// Experimental semantic SALES reader. Independent of P1/P2/P3; NOT certified.
+// Scope: candidate VINs for one store/model/month. Read-only PostgreSQL.
+import { queryDb } from '../lib/neon.js';
+
+export async function semanticSalesCandidates({
+  store_id, model_id, brand_id, year, month,
+}) {
+  for (const id of [store_id, model_id, brand_id]) {
+    if (!Number.isSafeInteger(id) || id < 1) throw new Error('INVALID_ID');
+  }
+  if (!Number.isSafeInteger(year) || year < 2020 || year > 2100 ||
+      !Number.isSafeInteger(month) || month < 1 || month > 12)
+    throw new Error('INVALID_PERIOD');
+  const mm = String(month).padStart(2, '0');
+  const yy = String(year).slice(-2);
+  const datePattern = '^(' + year + '-' + mm + '-[0-9]{2}|[0-9]{1,2}/0?' +
+    month + '/' + year + '|[0-9]{1,2}/0?' + month + '/' + yy + ')([[:space:]]|$)';
+  const sql = `
+    SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin
+    FROM ventas_raw v
+    WHERE btrim(v.categoria_cliente) IN ('Cliente General','Concesionaria')
+      AND nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL
+      AND btrim(v.fecha_factura) ~ $1
+      AND (EXISTS (
+        SELECT 1 FROM sucursales_master s
+        WHERE s.sucursal_id = $2
+          AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text)
+      ) OR EXISTS (
+        SELECT 1 FROM vehiculo_canonico vc
+        WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = $2
+      ))
+      AND (EXISTS (
+        SELECT 1 FROM producto_aliases_v01 a
+        JOIN modelos_master_v01 m ON m.modelo_id = a.modelo_id
+        WHERE a.estado = 'RESUELTO' AND a.modelo_id = $3 AND m.marca_id = $4
+          AND lower(a.fuente) LIKE 'ventas_raw%'
+          AND a.nivel IN ('MODELO','VERSION')
+          AND master_norm(v.articulo) = master_norm(a.valor_normalizado)
+      ) OR EXISTS (
+        SELECT 1 FROM vehiculo_canonico vc
+        JOIN versiones_master_v01 ver ON ver.version_id = vc.version_id
+        JOIN modelos_master_v01 m ON m.modelo_id = ver.modelo_id
+        WHERE vc.vin = v.nro_vin_chasis
+          AND m.modelo_id = $3 AND m.marca_id = $4
+      ))
+    ORDER BY vin`;
+  const start = performance.now();
+  const rows = await queryDb(sql, [datePattern, store_id, model_id, brand_id]);
+  return { vins: rows.map(row => row.vin), count: rows.length,
+    elapsed_ms: Math.round(performance.now() - start),
+    status: 'CANDIDATES_ONLY_NOT_CERTIFIED' };
+}
+
+// Example: semanticSalesCandidates({store_id:4,model_id:28,brand_id:89,year:2026,month:8})
