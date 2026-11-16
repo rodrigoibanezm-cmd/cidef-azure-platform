@@ -1,21 +1,20 @@
 name: Update Azure pricing from Blob
 
+on:
+  workflow_dispatch:
+    inputs:
+      filename:
+        description: "Archivo XLSB en cidef/precios/"
+        required: true
+        type: string
+        default: "LISTA DE PRECIOS NOVIEMBRE 02-11-2026.xlsb"
+
 concurrency:
   group: azure-pricing-import
   cancel-in-progress: false
 
-on:
-  workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/pricing/**'
-      - 'scripts/update-pricing-azure.js'
-      - 'scripts/compare-pricing-neon-azure.js'
-      - '.github/workflows/update-pricing-azure.yml'
-
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 jobs:
@@ -27,143 +26,46 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Azure login via OIDC
-        id: azure_login
-        continue-on-error: true
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Find and download the certified source XLSB from Azure Blob
+      - name: Download selected XLSB from Azure Blob
         id: source
-        continue-on-error: true
         shell: bash
+        env:
+          SOURCE_FILENAME: ${{ inputs.filename }}
         run: |
           set -euo pipefail
-          WORK_DIR="$RUNNER_TEMP/azure-pricing"
-          mkdir -p "$WORK_DIR"
-          az storage blob list \
-            --account-name cidefprodstorage \
-            --container-name cidef \
-            --auth-mode key \
-            --output json > "$WORK_DIR/blob-list.json"
-          python3 - "$WORK_DIR/blob-list.json" "$WORK_DIR/selected.json" "$GITHUB_OUTPUT" <<'PY'
-          import json, re, sys
-          items = json.load(open(sys.argv[1], encoding="utf-8"))
-          def norm(value):
-              return re.sub(r"[^A-Z0-9]", "", value.upper())
-          candidates = [x for x in items if x.get("name", "").lower().endswith(".xlsb")
-                        and "LISTA" in norm(x.get("name", "").split("/")[-1])
-                        and "PRECIO" in norm(x.get("name", "").split("/")[-1])]
-          matches = [x for x in candidates if "14102026" in norm(x.get("name", "").split("/")[-1])]
-          if len(matches) != 1:
-              candidate_names = [x.get("name", "") for x in candidates]
-              message = "Expected one original 14-10-2026 XLSB; found " + str(len(matches)) + "; candidates=" + str(candidate_names)
-              with open(sys.argv[3], "a", encoding="utf-8") as f:
-                  f.write("source_error=" + message.replace("\n", " ") + "\n")
-              raise SystemExit(message)
-          with open(sys.argv[2], "w", encoding="utf-8") as f:
-              json.dump(matches[0], f)
-          print("selected_blob=" + matches[0]["name"])
-          PY
-          BLOB_NAME=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$WORK_DIR/selected.json")
-          FILE_NAME="${BLOB_NAME##*/}"
+          [[ "$SOURCE_FILENAME" == *.xlsb ]] || { echo "::error::Se requiere un archivo .xlsb"; exit 1; }
+          [[ "$SOURCE_FILENAME" != */* && "$SOURCE_FILENAME" != *\\* && "$SOURCE_FILENAME" != *..* ]] || {
+            echo "::error::Ingresa solo el nombre del archivo, sin rutas"
+            exit 1
+          }
+          BLOB_NAME="precios/$SOURCE_FILENAME"
+          FILE_PATH="$RUNNER_TEMP/pricing-source.xlsb"
           az storage blob download \
             --account-name cidefprodstorage \
             --container-name cidef \
             --auth-mode key \
             --name "$BLOB_NAME" \
-            --file "$WORK_DIR/$FILE_NAME" \
+            --file "$FILE_PATH" \
+            --overwrite \
             --only-show-errors \
             --output none
-          echo "path=$WORK_DIR/$FILE_NAME" >> "$GITHUB_OUTPUT"
-          echo "name=$FILE_NAME" >> "$GITHUB_OUTPUT"
+          mv "$FILE_PATH" "$RUNNER_TEMP/$SOURCE_FILENAME"
+          echo "path=$RUNNER_TEMP/$SOURCE_FILENAME" >> "$GITHUB_OUTPUT"
+          echo "name=$SOURCE_FILENAME" >> "$GITHUB_OUTPUT"
 
-      - name: Install only workbook and PostgreSQL runtime dependencies
-        id: dependencies
-        continue-on-error: true
+      - name: Install pricing runtime dependencies
         run: npm install --no-save --no-package-lock --ignore-scripts xlsx@0.18.5 pg@8.16.3
 
-      - name: Import append-only price history and add canonical product identities
-        id: import
-        continue-on-error: true
+      - name: Import price history and canonical products
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
-        shell: bash
-        run: |
-          set +e
-          node scripts/update-pricing-azure.js "${{ steps.source.outputs.path }}" > "$RUNNER_TEMP/pricing-import.log" 2>&1
-          status=$?
-          cat "$RUNNER_TEMP/pricing-import.log"
-          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
-          if [[ "$status" -eq 0 ]]; then cp "$RUNNER_TEMP/pricing-import.log" "$RUNNER_TEMP/pricing-import-success.json"; fi
-
-      - name: Verify October 14 parity with Neon (read only)
-        id: parity
-        if: steps.import.outputs.exit_code == '0'
-        continue-on-error: true
-        env:
-          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
-          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
-          PRICE_SOURCE_FILE: ${{ steps.source.outputs.name }}
-        shell: bash
-        run: |
-          set +e
-          node scripts/compare-pricing-neon-azure.js > "$RUNNER_TEMP/pricing-parity.log" 2>&1
-          status=$?
-          cat "$RUNNER_TEMP/pricing-parity.log"
-          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
-          if [[ "$status" -eq 0 ]]; then cp "$RUNNER_TEMP/pricing-parity.log" "$RUNNER_TEMP/pricing-parity-success.json"; fi
-
-      - name: Publish verification summary
-        if: always()
-        env:
-          AZURE_LOGIN_OUTCOME: ${{ steps.azure_login.outcome }}
-          SOURCE_OUTCOME: ${{ steps.source.outcome }}
-          DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
-          SOURCE_FILE: ${{ steps.source.outputs.name }}
-          SOURCE_ERROR: ${{ steps.source.outputs.source_error }}
-          IMPORT_EXIT: ${{ steps.import.outputs.exit_code }}
-          PARITY_EXIT: ${{ steps.parity.outputs.exit_code }}
-        shell: bash
+          PRICE_SOURCE_PATH: ${{ steps.source.outputs.path }}
         run: |
           set -euo pipefail
-          REPORT=audit/azure-pricing-last-run.md
-          {
-            echo "# Azure pricing update"
-            echo
-            echo "- Commit: $GITHUB_SHA"
-            echo "- Azure login: ${AZURE_LOGIN_OUTCOME:-not-run}"
-            echo "- Blob source step: ${SOURCE_OUTCOME:-not-run}"
-            echo "- Runtime dependencies: ${DEPENDENCIES_OUTCOME:-not-run}"
-            echo "- Source file: ${SOURCE_FILE:-unavailable}"
-            echo "- Blob selection error: ${SOURCE_ERROR:-none}"
-            echo "- Import exit code: ${IMPORT_EXIT:-not-run}"
-            echo "- Neon parity exit code: ${PARITY_EXIT:-not-run}"
-            if [[ -f "$RUNNER_TEMP/pricing-import-success.json" ]]; then
-              echo
-              echo "## Import summary"
-              echo '~~~json'
-              cat "$RUNNER_TEMP/pricing-import-success.json"
-              echo '~~~'
-            fi
-            if [[ -f "$RUNNER_TEMP/pricing-parity-success.json" ]]; then
-              echo
-              echo "## Parity summary"
-              echo '~~~json'
-              cat "$RUNNER_TEMP/pricing-parity-success.json"
-              echo '~~~'
-            fi
-          } > "$REPORT"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$REPORT"
-          if ! git diff --cached --quiet; then
-            git commit -m "audit: record Azure pricing update result"
-            git push origin HEAD:main
-          fi
-          if [[ "${IMPORT_EXIT:-}" != "0" || "${PARITY_EXIT:-}" != "0" ]]; then
-            echo "::error::Azure pricing import or Neon parity check failed; see workflow logs and $REPORT"
-            exit 1
-          fi
+          node scripts/update-pricing-azure.js "$PRICE_SOURCE_PATH"
