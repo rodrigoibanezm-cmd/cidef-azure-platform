@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { z } from 'zod';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { closeAzurePool, getAzurePool } from '../lib/azure-postgres.js';
 import { createMcpServer } from '../lib/mcp/server.js';
@@ -86,11 +87,18 @@ const httpServer = http.createServer(async (req, res) => {
   const server = createMcpServer();
   server.registerTool('sales_selective_probe', {
     title: 'Experimental SALES selective SQL probe',
-    description: 'Read-only experimental benchmark for FOTON G7, Pajaritos, August 2026. Compares selective and existing P1 results and timings. NOT certified P1 evidence.',
-    inputSchema: {},
+    description: 'Read-only experimental SALES benchmark. Requires OWN_STORES, brand_id, model_id, store_id, date_from (first day of month), date_to (same month). Compares semantic candidate selection against existing P1. NOT certified evidence.',
+    inputSchema: {
+      commercial_universe: z.literal('OWN_STORES'),
+      brand_id: z.number().int().positive(),
+      model_id: z.number().int().positive(),
+      store_id: z.number().int().positive(),
+      date_from: z.string(),
+      date_to: z.string(),
+    },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  }, async () => {
-    const out = await runSalesSelectiveProbe();
+  }, async (filters) => {
+    const out = await runSalesSelectiveProbe(filters);
     return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
   });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
