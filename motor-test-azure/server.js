@@ -156,21 +156,21 @@ const httpServer = http.createServer(async (req, res) => {
     ];
     if (filters.store_id != null) {
       params.push(filters.store_id);
-      conditions.push(`(EXISTS (SELECT 1 FROM sucursales_master s WHERE s.sucursal_id = ${params.length} AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text)) OR EXISTS (SELECT 1 FROM vehiculo_canonico vc WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = ${params.length}))`);
+      conditions.push(`(EXISTS (SELECT 1 FROM sucursales_master s WHERE s.sucursal_id = $${params.length} AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text)) OR EXISTS (SELECT 1 FROM vehiculo_canonico vc WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = $${params.length}))`);
     }
     if (filters.brand_id != null || filters.model_id != null || filters.version_id != null) {
       const productConditions = [];
       if (filters.brand_id != null) {
         params.push(filters.brand_id);
-        productConditions.push(`m.marca_id = ${params.length}`);
+        productConditions.push(`m.marca_id = $${params.length}`);
       }
       if (filters.model_id != null) {
         params.push(filters.model_id);
-        productConditions.push(`m.modelo_id = ${params.length}`);
+        productConditions.push(`m.modelo_id = $${params.length}`);
       }
       if (filters.version_id != null) {
         params.push(filters.version_id);
-        productConditions.push(`vc.version_id = ${params.length}`);
+        productConditions.push(`vc.version_id = $${params.length}`);
       }
       const identityMatch = productConditions.join(' AND ');
       conditions.push(`EXISTS (
