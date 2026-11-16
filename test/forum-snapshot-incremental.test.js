@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { generateBundles } from '../lib/forum-snapshot/generate.js';
-import { assertSnapshotParity, bundleKey, digest, indexCache, inspectPlan, planBundle } from '../lib/forum-snapshot/incremental.js';
+import { assertSnapshotParity, bundleKey, digest, indexCache, inspectPlan, planBundle, engineSignature } from '../lib/forum-snapshot/incremental.js';
 import { FIELDS } from '../lib/data-floor/sales/contract.js';
 
 function fixture(){
@@ -132,4 +132,25 @@ test('SALES November is available with October FORUM cutoff and no invented FORU
     assert.ok(row.payload.reports['2026-04']);
   }
   assert.equal(f.calls.filter(c=>c.name==='data_observe'&&c.args.period_from==='2026-04').length,0);
+});
+
+test('engine signature ignores unrelated lib edits but follows imported dependencies',async()=>{
+  const {mkdtemp,mkdir,writeFile,rm}=await import('node:fs/promises');
+  const {tmpdir}=await import('node:os');
+  const {join}=await import('node:path');
+  const {pathToFileURL}=await import('node:url');
+  const root=await mkdtemp(join(tmpdir(),'forum-engine-'));
+  try {
+    await mkdir(join(root,'scripts'),{recursive:true});
+    await mkdir(join(root,'lib','forum-snapshot'),{recursive:true});
+    await mkdir(join(root,'lib','unrelated'),{recursive:true});
+    await writeFile(join(root,'scripts','refresh-forum-ventas-snapshot-azure.js'),"import '../lib/forum-snapshot/helper.js';\n");
+    await writeFile(join(root,'lib','forum-snapshot','helper.js'),'export const value=1;\n');
+    await writeFile(join(root,'lib','unrelated','probe.js'),'export const probe=1;\n');
+    const base=await engineSignature(pathToFileURL(root+'/'));
+    await writeFile(join(root,'lib','unrelated','probe.js'),'export const probe=2;\n');
+    assert.equal(await engineSignature(pathToFileURL(root+'/')),base);
+    await writeFile(join(root,'lib','forum-snapshot','helper.js'),'export const value=2;\n');
+    assert.notEqual(await engineSignature(pathToFileURL(root+'/')),base);
+  } finally {await rm(root,{recursive:true,force:true});}
 });
