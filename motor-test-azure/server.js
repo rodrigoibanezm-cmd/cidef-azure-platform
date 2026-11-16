@@ -6,6 +6,7 @@ import { createMcpServer } from '../lib/mcp/server.js';
 import { observePrecurseSnapshotBundle } from '../lib/data-floor/forum/observations.js';
 import { buildComoVamos } from './como-vamos.js';
 import { runSalesSelectiveProbe } from '../scripts/diagnose-sales-first-cut.mjs';
+import { listDataSources, describeDataSource } from '../lib/data-floor/registry.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const MCP_PATH = '/api/mcp';
@@ -85,6 +86,16 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   const server = createMcpServer();
+  server.registerTool('semantic_catalog', {
+    title: 'Commercial semantic catalog',
+    description: 'Read-only domain-neutral semantic discovery. Returns existing source contracts without running P1 or querying RAW data.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async () => {
+    const sources = listDataSources().map(source => describeDataSource(source));
+    const out = { sources };
+    return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
+  });
   server.registerTool('sales_selective_probe', {
     title: 'Experimental SALES selective SQL probe',
     description: 'Read-only experimental SALES benchmark. Requires OWN_STORES, brand_id, model_id, store_id, date_from (first day of month), date_to (same month). Compares semantic candidate selection against existing P1. NOT certified evidence.',
