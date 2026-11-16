@@ -9,13 +9,6 @@ import { closeAzurePool, getAzurePool } from '../lib/azure-postgres.js';
 const inputPath = process.argv[2];
 if (!inputPath) throw new Error('Usage: node scripts/update-pricing-azure.js <downloaded-xlsb-path>');
 const sourceFile = path.basename(inputPath);
-const match = sourceFile.match(/(\d{2})[-_](\d{2})[-_](\d{4})\.xlsb$/i);
-if (!match) throw new Error(`Pricing filename must end in DD-MM-YYYY.xlsb: ${sourceFile}`);
-const expectedDate = `${match[3]}-${match[2]}-${match[1]}`;
-if (!Number.isFinite(Date.parse(expectedDate)) || new Date(expectedDate).toISOString().slice(0, 10) !== expectedDate) {
-  throw new Error(`Invalid pricing date in filename: ${sourceFile}`);
-}
-
 const { records } = parsePriceWorkbook(await readFile(inputPath), sourceFile);
 const operationalRecords = records.filter((row) => String(row.source_sheet ?? '').trim().toUpperCase() !== 'FOTON');
 const normalized = operationalRecords.map(normalizePriceRecord).filter(Boolean);
@@ -23,10 +16,10 @@ const audit = auditNormalizedRecords(operationalRecords, normalized);
 if (audit.blockingRejectedRows > 0) {
   throw new Error(`PRICING_SOURCE_VALIDATION_FAILED: ${audit.blockingRejectedRows} commercial rows rejected; no Azure writes performed`);
 }
+const vigencias = [...new Set(normalized.map((row) => row.vigencia_desde).filter(Boolean))].sort();
+const expectedDate = vigencias.at(-1);
+if (!expectedDate) throw new Error(`No normalized pricing rows with declared vigencia in ${sourceFile}`);
 const current = normalized.filter((row) => row.vigencia_desde === expectedDate);
-if (!current.length) throw new Error(`No normalized pricing rows with vigencia ${expectedDate} in ${sourceFile}`);
-const future = normalized.filter((row) => row.vigencia_desde > expectedDate);
-if (future.length) throw new Error(`Pricing file has ${future.length} rows dated after filename vigencia ${expectedDate}`);
 
 const pool = getAzurePool();
 const priorPricingResult = await pool.query(
