@@ -129,6 +129,39 @@ const httpServer = http.createServer(async (req, res) => {
     };
     return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
   });
+  server.registerTool('semantic_execute', {
+    title: 'Selective semantic SQL execution',
+    description: 'Read-only SALES candidate VIN retrieval using declared date and optional store filters. Returns raw candidates, never P1-certified sales.',
+    inputSchema: {
+      source: z.literal('SALES'),
+      filters: z.object({
+        date_from: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+        date_to: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+        store_id: z.number().int().positive().optional(),
+        commercial_universe: z.enum(['COMPANY', 'OWN_STORES', 'DEALERS']).optional(),
+      }).strict(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ source, filters }) => {
+    if (filters.date_from > filters.date_to) throw new Error('INVALID_DATE_RANGE');
+    const start = performance.now();
+    const params = [filters.date_from, filters.date_to];
+    const conditions = [
+      "btrim(v.categoria_cliente) IN ('Cliente General','Concesionaria')",
+      "nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL",
+      "CASE WHEN btrim(v.fecha_factura) ~ '^\\\\d{4}-\\\\d{2}-\\\\d{2}' THEN left(btrim(v.fecha_factura),10)::date WHEN btrim(v.fecha_factura) ~ '^\\\\d{1,2}/\\\\d{1,2}/\\\\d{4}' THEN to_date(split_part(btrim(v.fecha_factura),' ',1),'DD/MM/YYYY') ELSE NULL END BETWEEN $1::date AND $2::date",
+    ];
+    if (filters.store_id != null) {
+      params.push(filters.store_id);
+      conditions.push(`EXISTS (SELECT 1 FROM sucursales_master s WHERE s.sucursal_id = ${params.length} AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text))`);
+    }
+    if (filters.commercial_universe === 'OWN_STORES') conditions.push("btrim(v.categoria_cliente) = 'Cliente General'");
+    if (filters.commercial_universe === 'DEALERS') conditions.push("btrim(v.categoria_cliente) = 'Concesionaria'");
+    const sql = 'SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin FROM ventas_raw v WHERE ' + conditions.join(' AND ') + ' ORDER BY vin';
+    const result = await getAzurePool().query(sql, params);
+    const out = { source, status: 'RAW_CANDIDATES_NOT_CERTIFIED', filters, candidate_vins: result.rowCount, vins: result.rows.map(row => row.vin), elapsed_ms: Math.round(performance.now() - start), sql_executed: true, certified: false };
+    return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
+  });
   server.registerTool('sales_selective_probe', {
     title: 'Experimental SALES selective SQL probe',
     description: 'Read-only experimental SALES benchmark. Requires OWN_STORES, brand_id, model_id, store_id, date_from (first day of month), date_to (same month). Compares semantic candidate selection against existing P1. NOT certified evidence.',
