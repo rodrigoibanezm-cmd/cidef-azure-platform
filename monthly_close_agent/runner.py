@@ -1,6 +1,7 @@
 """One manual SDK run, Markdown output and the existing P3 trace."""
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -10,17 +11,23 @@ from agents import Agent, ModelSettings, RunConfig, Runner
 from .connection import CertifiedMCP
 
 
-async def generate(period, *, url, model, output_dir, max_turns=40):
-    run_id = f"monthly-close-{period}-{uuid4()}"
+async def generate(question, *, url, model, output_dir, max_turns=40):
+    question = question.strip()
+    if not question:
+        raise ValueError("La pregunta no puede estar vacía")
+    legacy_month = bool(re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", question))
+    run_id = (f"monthly-close-{question}-" if legacy_month else "p4-") + str(uuid4())
     destination = Path(output_dir) / run_id
     mission = Path(__file__).with_name("mission.md").read_text(encoding="utf-8")
     async with CertifiedMCP(url, run_id) as server:
         agent = Agent(
-            name="cidef-monthly-close", instructions=mission, model=model,
+            name="cidef-monthly-close" if legacy_month else "cidef-p4",
+            instructions=mission, model=model,
             mcp_servers=[server], model_settings=ModelSettings(parallel_tool_calls=False),
         )
         result = await Runner.run(
-            agent, f"Prepara el cierre mensual de {period}. run_id: {run_id}.",
+            agent, (f"Prepara el cierre mensual de {question}." if legacy_month
+                    else question) + f" run_id: {run_id}.",
             max_turns=max_turns, run_config=RunConfig(tracing_disabled=True),
         )
         trace = await server.call_tool("run_trace", {})
@@ -48,7 +55,7 @@ async def generate(period, *, url, model, output_dir, max_turns=40):
         if not isinstance(result.final_output, str) or not result.final_output.strip():
             raise RuntimeError("El agente no devolvió Markdown; se conservó la traza")
         header = (
-            f"# CIDEF — Cierre mensual {period}\n\n"
+            f"# CIDEF — {'Cierre mensual ' + question if legacy_month else 'Investigación comercial'}\n\n"
             f"Borrador ejecutivo generado por IA; requiere revisión.\n\n"
             f"- Ejecución: `{run_id}`\n- Modelo: `{model}`\n"
             f"- Generado UTC: {datetime.now(timezone.utc).isoformat()}\n"
