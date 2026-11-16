@@ -96,6 +96,39 @@ const httpServer = http.createServer(async (req, res) => {
     const out = { sources };
     return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
   });
+  server.registerTool('semantic_plan', {
+    title: 'Semantic query planner',
+    description: 'Read-only declarative planning from existing source contracts. Returns supported filters and a logical plan; does not execute SQL or certify evidence.',
+    inputSchema: {
+      source: z.string(),
+      filters: z.record(z.string(), z.any()).default({}),
+      fields: z.array(z.string()).optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ source, filters, fields }) => {
+    const contract = describeDataSource(source);
+    const unsupportedFilters = Object.keys(filters).filter(key => !contract.filters.includes(key));
+    const unsupportedFields = (fields || []).filter(key => !contract.fields.includes(key));
+    if (unsupportedFilters.length || unsupportedFields.length) {
+      throw new Error('UNSUPPORTED_SEMANTIC_IDENTIFIERS: ' + JSON.stringify({ unsupportedFilters, unsupportedFields }));
+    }
+    const out = {
+      source: contract.source,
+      grain: contract.grain,
+      filters,
+      fields: fields || contract.fields,
+      boolean_logic: contract.boolean_logic,
+      plan: [
+        { operation: 'SOURCE', source: contract.source },
+        { operation: 'FILTER', predicates: Object.entries(filters).map(([field, value]) => ({ field, operator: Array.isArray(value) ? 'IN' : 'EQ', value })) },
+        { operation: 'PROJECT', fields: fields || contract.fields },
+      ],
+      status: 'LOGICAL_PLAN_ONLY',
+      sql_executed: false,
+      certified: false,
+    };
+    return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
+  });
   server.registerTool('sales_selective_probe', {
     title: 'Experimental SALES selective SQL probe',
     description: 'Read-only experimental SALES benchmark. Requires OWN_STORES, brand_id, model_id, store_id, date_from (first day of month), date_to (same month). Compares semantic candidate selection against existing P1. NOT certified evidence.',
