@@ -6,6 +6,7 @@ RUN npm install --omit=dev --no-audit --no-fund
 COPY lib ./lib
 COPY scripts/prototype-sales-sql-recognition.mjs ./scripts/prototype-sales-sql-recognition.mjs
 COPY scripts/diagnose-sales-first-cut.mjs ./scripts/diagnose-sales-first-cut.mjs
+COPY scripts/semantic-sales-prototype.mjs ./scripts/semantic-sales-prototype.mjs
 COPY motor-test-azure/server.js ./motor-test-azure/server.js
 COPY motor-test-azure/como-vamos.js ./motor-test-azure/como-vamos.js
 USER node
