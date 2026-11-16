@@ -148,6 +148,9 @@ const httpServer = http.createServer(async (req, res) => {
   }, async ({ source, filters }) => {
     if (filters.date_from > filters.date_to) throw new Error('INVALID_DATE_RANGE');
     const start = performance.now();
+    for (const id of [filters.store_id, filters.brand_id, filters.model_id, filters.version_id]) {
+      if (id != null && !Number.isSafeInteger(id)) throw new Error('INVALID_FILTER_ID');
+    }
     const params = [filters.date_from, filters.date_to];
     const conditions = [
       "btrim(v.categoria_cliente) IN ('Cliente General','Concesionaria')",
@@ -155,22 +158,18 @@ const httpServer = http.createServer(async (req, res) => {
       "CASE WHEN btrim(v.fecha_factura) ~ '^\\\\d{4}-\\\\d{2}-\\\\d{2}' THEN left(btrim(v.fecha_factura),10)::date WHEN btrim(v.fecha_factura) ~ '^\\\\d{1,2}/\\\\d{1,2}/\\\\d{4}' THEN to_date(split_part(btrim(v.fecha_factura),' ',1),'DD/MM/YYYY') ELSE NULL END BETWEEN $1::date AND $2::date",
     ];
     if (filters.store_id != null) {
-      params.push(filters.store_id);
-      conditions.push(`(EXISTS (SELECT 1 FROM sucursales_master s WHERE s.sucursal_id = $${params.length} AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text)) OR EXISTS (SELECT 1 FROM vehiculo_canonico vc WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = $${params.length}))`);
+      conditions.push(`(EXISTS (SELECT 1 FROM sucursales_master s WHERE s.sucursal_id = ${filters.store_id} AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text)) OR EXISTS (SELECT 1 FROM vehiculo_canonico vc WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = ${filters.store_id}))`);
     }
     if (filters.brand_id != null || filters.model_id != null || filters.version_id != null) {
       const productConditions = [];
       if (filters.brand_id != null) {
-        params.push(filters.brand_id);
-        productConditions.push(`m.marca_id = $${params.length}`);
+        productConditions.push(`m.marca_id = ${filters.brand_id}`);
       }
       if (filters.model_id != null) {
-        params.push(filters.model_id);
-        productConditions.push(`m.modelo_id = $${params.length}`);
+        productConditions.push(`m.modelo_id = ${filters.model_id}`);
       }
       if (filters.version_id != null) {
-        params.push(filters.version_id);
-        productConditions.push(`vc.version_id = $${params.length}`);
+        productConditions.push(`vc.version_id = ${filters.version_id}`);
       }
       const identityMatch = productConditions.join(' AND ');
       conditions.push(`EXISTS (
