@@ -1,6 +1,7 @@
 // Standalone read-only experiment. This is NOT a certified P1 path.
 import { performance } from 'node:perf_hooks';
 import { queryDb } from '../lib/neon.js';
+import { semanticSalesCandidates } from './semantic-sales-prototype.mjs';
 import { dataset, field } from '../lib/data-floor/sales/dataset.js';
 import { createSalesPreparation } from '../lib/data-floor/sales/preparation.js';
 import { loadCommercialIdentityMap, loadHistoricalSalesChannelMap, loadDealerBuyerMap } from '../lib/ventas-commercial/buildVentasCommercialContext.js';
@@ -9,9 +10,13 @@ import { loadSalesAttributes } from '../lib/data-floor/sales/attributes.js';
 import { customGptDb } from '../lib/custom-gpt/db.js';
 import { loadVentasRows } from '../lib/ventas/loadVentasRows.js';
 
-export async function runSalesSelectiveProbe() {
-const filters = {commercial_universe:'OWN_STORES',brand_id:89,model_id:28,
-  store_id:4,date_from:'2026-08-01',date_to:'2026-08-31'};
+export async function runSalesSelectiveProbe(filters) {
+if (!filters || filters.commercial_universe !== 'OWN_STORES' ||
+    ![filters.brand_id, filters.model_id, filters.store_id].every(v => Number.isSafeInteger(v) && v > 0) ||
+    !/^\d{4}-\d{2}-01$/.test(filters.date_from) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(filters.date_to) ||
+    filters.date_from.slice(0, 7) !== filters.date_to.slice(0, 7))
+  throw new Error('INVALID_PROBE_FILTERS');
 const measurements = [];
 const size = value => value instanceof Map ? value.size
   : Array.isArray(value) ? value.length : null;
@@ -45,43 +50,13 @@ const tracedDb={query:async(sql,params)=>{
     :'sql_universe_other';
   return time(name,()=>baseDb.query(sql,params));
 }};
-// Include all accepted date spellings; confirmation belongs to P1's parser.
-const month=/^\d{4}-(\d{2})/.exec(filters.date_from)?.[1];
-const year=filters.date_from.slice(0,4);
-const dateRe='^('+year+'-'+month+'-[0-9]{2}|[0-9]{1,2}/0?'+Number(month)+'/'+year+
-  '|[0-9]{1,2}/0?'+Number(month)+'/'+year.slice(2)+')([[:space:]]|$)';
-const sql=`
-WITH candidate AS MATERIALIZED (
- SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin
- FROM ventas_raw v
- WHERE btrim(v.categoria_cliente) IN ('Cliente General','Concesionaria')
-   AND nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL
-   AND btrim(v.fecha_factura) ~ $1
-   AND (EXISTS (
-       SELECT 1 FROM sucursales_master s
-       WHERE s.sucursal_id=$2 AND btrim(s.id_sucursal_vta::text)=btrim(v.id_sucursal_vta::text)
-     ) OR EXISTS (
-       SELECT 1 FROM vehiculo_canonico vc
-       WHERE vc.vin=v.nro_vin_chasis AND vc.sucursal_venta_id=$2
-     ))
-   AND (EXISTS (
-       SELECT 1 FROM producto_aliases_v01 a
-       JOIN modelos_master_v01 m ON m.modelo_id=a.modelo_id
-       WHERE a.estado='RESUELTO' AND a.modelo_id=$3 AND m.marca_id=$4
-         AND lower(a.fuente) LIKE 'ventas_raw%'
-         AND a.nivel IN ('MODELO','VERSION')
-         AND master_norm(v.articulo)=master_norm(a.valor_normalizado)
-     ) OR EXISTS (
-       SELECT 1 FROM vehiculo_canonico vc
-       JOIN versiones_master_v01 ver ON ver.version_id=vc.version_id
-       JOIN modelos_master_v01 m ON m.modelo_id=ver.modelo_id
-       WHERE vc.vin=v.nro_vin_chasis AND m.modelo_id=$3 AND m.marca_id=$4
-     ))
-)
-SELECT vin FROM candidate`;
+// Candidate selection belongs to the independent semantic engine.
 const totalStart=performance.now();
-const candidates=await time('candidate_sql',()=>queryDb(sql,[dateRe,filters.store_id,filters.model_id,filters.brand_id]));
-const candidateVins=new Set(candidates.map(r=>String(r.vin).trim()));
+const candidateResult=await time('candidate_sql',()=>semanticSalesCandidates({
+  store_id:filters.store_id,model_id:filters.model_id,brand_id:filters.brand_id,
+  year:Number(filters.date_from.slice(0,4)),month:Number(filters.date_from.slice(5,7))
+}));
+const candidateVins=new Set(candidateResult.vins);
 const related=await time('fetch_related_rows',()=>queryDb(
   `SELECT id,nro_operacion,razon_social,cliente,articulo,desc_articulo,
   nro_vin_chasis,nombre_usuario,fecha_factura,precio_vta,precio_vta_pesos_con_iva,
@@ -117,7 +92,7 @@ const expected=new Set(baseline.filtered.map(signature));
 const actual=new Set(selective.filtered.map(signature));
 const missing=[...expected].filter(v=>!actual.has(v));
 const extra=[...actual].filter(v=>!expected.has(v));
-const result={case:'FOTON G7 / Pajaritos / agosto 2026',
+const result={case:filters,
   candidate_vins:candidateVins.size,related_raw_rows:related.length,
   full_raw_rows:fullRows.length,
   certified_vins:baseline.filtered.length,selective_vins:selective.filtered.length,
@@ -141,7 +116,8 @@ return result;
 }
 
 if (process.argv[1]?.endsWith('/diagnose-sales-first-cut.mjs')) {
-  const result=await runSalesSelectiveProbe();
+  const filters=JSON.parse(process.argv[2] || 'null');
+  const result=await runSalesSelectiveProbe(filters);
   console.log(JSON.stringify(result,null,2));
   if(result.missing_records||result.extra_records||result.certified_vins!==result.selective_vins)process.exitCode=1;
 }
