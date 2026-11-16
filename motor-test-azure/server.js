@@ -135,8 +135,8 @@ const httpServer = http.createServer(async (req, res) => {
     inputSchema: {
       source: z.literal('SALES'),
       filters: z.object({
-        date_from: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
-        date_to: z.string().regex(/^\\d{4}-\\d{2}-\\d{2}$/),
+        date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         store_id: z.number().int().positive().optional(),
         brand_id: z.number().int().positive().optional(),
         model_id: z.number().int().positive().optional(),
