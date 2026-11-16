@@ -1,4 +1,4 @@
-"""Usage: python -m monthly_close_agent 2026-10."""
+"""Usage: python -m monthly_close_agent "¿Cómo va Pajaritos?"."""
 
 import argparse
 import asyncio
@@ -15,8 +15,8 @@ def period_value(value):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Cierre mensual CIDEF con P1/P2/P3")
-    parser.add_argument("period", type=period_value)
+    parser = argparse.ArgumentParser(description="Orquestador comercial P4 sobre P1/P2/P3")
+    parser.add_argument("question", nargs="+", help="Pregunta comercial libre")
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL"))
     parser.add_argument("--output-dir", default="monthly-close-reports")
     parser.add_argument("--max-turns", type=int, default=40)
@@ -35,12 +35,12 @@ def main():
     from .runner import generate
     try:
         report = asyncio.run(generate(
-            args.period, url=url, model=args.model, output_dir=args.output_dir,
+            " ".join(args.question), url=url, model=args.model, output_dir=args.output_dir,
             max_turns=args.max_turns,
         ))
     except Exception as error:
         # Transport/provider exceptions may contain credentials or request content.
-        print(f"Cierre no generado ({type(error).__name__}). Verifica configuración, "
+        print(f"Investigación no generada ({type(error).__name__}). Verifica configuración, "
               "conexión MCP y acceso al modelo; revisa la traza local si existe.", file=sys.stderr)
         return 1
     print(report)
