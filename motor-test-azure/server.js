@@ -205,12 +205,16 @@ const httpServer = http.createServer(async (req, res) => {
       ? { source, status: 'RAW_CANDIDATES_NOT_CERTIFIED', filters, group_by, series: result.rows, candidate_vins: result.rows.reduce((n, row) => n + row.candidate_vins, 0), elapsed_ms: Math.round(performance.now() - start), sql_executed: true, certified: false }
       : { source, status: 'RAW_CANDIDATES_NOT_CERTIFIED', filters, candidate_vins: result.rowCount, vins: result.rows.map(row => row.vin), elapsed_ms: Math.round(performance.now() - start), sql_executed: true, certified: false };
     if (recognize) {
-      const prepared = await prepareSalesInput({candidateVins: out.vins});
+      const timings = {};
+      const prepared = await prepareSalesInput({candidateVins: out.vins, timings});
+      const recognitionStarted = performance.now();
       const recognized = await dataset({filters}, prepared);
+      timings.recognition_ms = Math.round(performance.now() - recognitionStarted);
       out.recognition = {
         status: 'EXPERIMENTAL_PARTIAL_UNIVERSE_NOT_CERTIFIED',
         vins: [...new Set(recognized.filtered.map(row => field(row, 'vin')))].sort(),
         elapsed_total_ms: Math.round(performance.now() - start),
+        timings,
         certified: false,
       };
     }
