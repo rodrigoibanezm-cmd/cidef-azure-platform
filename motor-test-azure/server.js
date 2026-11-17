@@ -134,6 +134,7 @@ const httpServer = http.createServer(async (req, res) => {
     description: 'Read-only SALES candidate VIN retrieval using declared date and optional store filters. Returns raw candidates, never P1-certified sales.',
     inputSchema: {
       source: z.literal('SALES'),
+      group_by: z.enum(['MONTH']).optional(),
       filters: z.object({
         date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -145,7 +146,7 @@ const httpServer = http.createServer(async (req, res) => {
       }).strict(),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  }, async ({ source, filters }) => {
+  }, async ({ source, filters, group_by }) => {
     if (filters.date_from > filters.date_to) throw new Error('INVALID_DATE_RANGE');
     const start = performance.now();
     for (const id of [filters.store_id, filters.brand_id, filters.model_id, filters.version_id]) {
@@ -191,9 +192,14 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (filters.commercial_universe === 'OWN_STORES') conditions.push("btrim(v.categoria_cliente) = 'Cliente General'");
     if (filters.commercial_universe === 'DEALERS') conditions.push("btrim(v.categoria_cliente) = 'Concesionaria'");
-    const sql = 'SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin FROM ventas_raw v WHERE ' + conditions.join(' AND ') + ' ORDER BY vin';
+    const dateExpr = "CASE WHEN btrim(v.fecha_factura) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN left(btrim(v.fecha_factura),10)::date WHEN btrim(v.fecha_factura) ~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}' THEN to_date(split_part(btrim(v.fecha_factura),' ',1),'DD/MM/YYYY') ELSE NULL END";
+    const sql = group_by === 'MONTH'
+      ? 'WITH latest AS (SELECT DISTINCT ON (btrim(v.nro_vin_chasis)) btrim(v.nro_vin_chasis) AS vin, ' + dateExpr + ' AS sale_date FROM ventas_raw v WHERE ' + conditions.join(' AND ') + ' ORDER BY btrim(v.nro_vin_chasis), sale_date DESC) SELECT to_char(sale_date, \'YYYY-MM\') AS month, COUNT(*)::int AS candidate_vins FROM latest GROUP BY 1 ORDER BY 1'
+      : 'SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin FROM ventas_raw v WHERE ' + conditions.join(' AND ') + ' ORDER BY vin';
     const result = await getAzurePool().query(sql, params);
-    const out = { source, status: 'RAW_CANDIDATES_NOT_CERTIFIED', filters, candidate_vins: result.rowCount, vins: result.rows.map(row => row.vin), elapsed_ms: Math.round(performance.now() - start), sql_executed: true, certified: false };
+    const out = group_by === 'MONTH'
+      ? { source, status: 'RAW_CANDIDATES_NOT_CERTIFIED', filters, group_by, series: result.rows, candidate_vins: result.rows.reduce((n, row) => n + row.candidate_vins, 0), elapsed_ms: Math.round(performance.now() - start), sql_executed: true, certified: false }
+      : { source, status: 'RAW_CANDIDATES_NOT_CERTIFIED', filters, candidate_vins: result.rowCount, vins: result.rows.map(row => row.vin), elapsed_ms: Math.round(performance.now() - start), sql_executed: true, certified: false };
     return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
   });
   server.registerTool('sales_selective_probe', {
