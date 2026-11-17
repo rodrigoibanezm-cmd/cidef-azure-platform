@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { queryDb } from '../lib/neon.js';
 import { semanticSalesCandidates } from './semantic-sales-prototype.mjs';
 import { dataset, field } from '../lib/data-floor/sales/dataset.js';
-import { createSalesPreparation } from '../lib/data-floor/sales/preparation.js';
+import { createSalesPreparation, prepareSalesInput } from '../lib/data-floor/sales/preparation.js';
 import { loadCommercialIdentityMap, loadHistoricalSalesChannelMap, loadDealerBuyerMap } from '../lib/ventas-commercial/buildVentasCommercialContext.js';
 import { loadVentasUniverseResources } from '../lib/ventas-universe/buildVentasUniverse.js';
 import { loadSalesAttributes } from '../lib/data-floor/sales/attributes.js';
@@ -81,7 +81,14 @@ const selectiveMs=Math.round(performance.now()-totalStart);
 // Break down the baseline into its full raw fetch and complete P1 execution.
 const fullRows=await time('full_raw_fetch_standalone',()=>loadVentasRows());
 const fullStart=performance.now();
-const baseline=await time('full_p1_dataset',()=>dataset({filters}));
+const baselineTimings = {};
+const baseline=await time('full_p1_dataset',async()=>{
+  const prepared=await time('full_p1_preparation',()=>prepareSalesInput({timings:baselineTimings}));
+  for(const key of ['rows_ms','commercial_map_ms','historical_map_ms','dealer_map_ms','resources_ms','attributes_ms','clone_ms','fingerprint_ms','preparation_total_ms']){
+    if(baselineTimings[key]!=null) measurements.push({name:'full_p1_'+key,ms:baselineTimings[key],rows:null});
+  }
+  return time('full_p1_recognition_and_filter',()=>dataset({filters},prepared));
+});
 const fullMs=Math.round(performance.now()-fullStart);
 const signature=row=>JSON.stringify([
   field(row,'vin'),row.source_id,field(row,'sale_date'),field(row,'brand_id'),
