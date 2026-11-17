@@ -172,12 +172,22 @@ const httpServer = http.createServer(async (req, res) => {
         productConditions.push(`vc.version_id = ${filters.version_id}`);
       }
       const identityMatch = productConditions.join(' AND ');
-      conditions.push(`EXISTS (
+      const aliasMatch = filters.version_id == null ? ` OR EXISTS (
+        SELECT 1 FROM producto_aliases_v01 a
+        JOIN modelos_master_v01 m ON m.modelo_id = a.modelo_id
+        WHERE a.estado = 'RESUELTO'
+          AND lower(a.fuente) LIKE 'ventas_raw%'
+          AND a.nivel IN ('MODELO','VERSION')
+          AND master_norm(v.articulo) = master_norm(a.valor_normalizado)
+          ${filters.brand_id != null ? `AND m.marca_id = ${filters.brand_id}` : ''}
+          ${filters.model_id != null ? `AND m.modelo_id = ${filters.model_id}` : ''}
+      )` : '';
+      conditions.push(`(EXISTS (
         SELECT 1 FROM vehiculo_canonico vc
         JOIN versiones_master_v01 ver ON ver.version_id = vc.version_id
         JOIN modelos_master_v01 m ON m.modelo_id = ver.modelo_id
         WHERE vc.vin = v.nro_vin_chasis AND ${identityMatch}
-      )`);
+      )${aliasMatch})`);
     }
     if (filters.commercial_universe === 'OWN_STORES') conditions.push("btrim(v.categoria_cliente) = 'Cliente General'");
     if (filters.commercial_universe === 'DEALERS') conditions.push("btrim(v.categoria_cliente) = 'Concesionaria'");
