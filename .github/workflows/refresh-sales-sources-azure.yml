@@ -1,0 +1,65 @@
+name: Refresh SALES sources Azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_date:
+        description: 'Fecha de los archivos SALES (YYYY-MM-DD)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cidef-sales-loader-manual
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    environment: Production
+    timeout-minutes: 35
+    steps:
+      - name: Validate source date
+        env:
+          SOURCE_DATE: ${{ inputs.source_date }}
+        run: |
+          [[ "$SOURCE_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || exit 1
+          [[ "$(date -u -d "$SOURCE_DATE" +%F 2>/dev/null)" == "$SOURCE_DATE" ]] || exit 1
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Start existing SALES job with per-execution override
+        env:
+          SOURCE_DATE: ${{ inputs.source_date }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESOURCE="/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/rg-cidef-prod/providers/Microsoft.App/jobs/cidef-data-loader-job"
+          API="2024-03-01"
+          az rest --method get --url "https://management.azure.com${RESOURCE}?api-version=${API}" > job.json
+          python3 - <<'PY'
+          import copy, json, os
+          job=json.load(open('job.json'))
+          assert job['properties']['configuration']['triggerType']=='Manual'
+          template=job['properties']['template']
+          assert len(template['containers'])==1
+          container=copy.deepcopy(template['containers'][0])
+          container['image']='cidefprodacr.azurecr.io/cidef-data-loader:sales-7d5aa22'
+          container['command']=['node']
+          container['args']=['scripts/refresh-sales-sources-azure.js','--dates',os.environ['SOURCE_DATE']]
+          container['env']=[e for e in container.get('env',[]) if e['name']!='CIDEF_ADMIN_EXECUTION_ID']
+          override={'template':{'containers':[container]}}
+          if template.get('initContainers'):
+              override['template']['initContainers']=template['initContainers']
+          json.dump(override,open('override.json','w'))
+          PY
+          az rest --method post --url "https://management.azure.com${RESOURCE}/start?api-version=${API}" --headers 'Content-Type=application/json' --body @override.json --query '{name:name,id:id}' -o json
+          rm -f job.json override.json
