@@ -7,6 +7,8 @@ import { observePrecurseSnapshotBundle } from '../lib/data-floor/forum/observati
 import { buildComoVamos } from './como-vamos.js';
 import { runSalesSelectiveProbe } from '../scripts/diagnose-sales-first-cut.mjs';
 import { listDataSources, describeDataSource } from '../lib/data-floor/registry.js';
+import { prepareSalesInput } from '../lib/data-floor/sales/preparation.js';
+import { dataset, field } from '../lib/data-floor/sales/dataset.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const MCP_PATH = '/api/mcp';
@@ -135,6 +137,7 @@ const httpServer = http.createServer(async (req, res) => {
     inputSchema: {
       source: z.literal('SALES'),
       group_by: z.enum(['MONTH']).optional(),
+      recognize: z.boolean().optional(),
       filters: z.object({
         date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -146,7 +149,8 @@ const httpServer = http.createServer(async (req, res) => {
       }).strict(),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  }, async ({ source, filters, group_by }) => {
+  }, async ({ source, filters, group_by, recognize }) => {
+    if (recognize && group_by) throw new Error('RECOGNIZE_REQUIRES_VIN_OUTPUT');
     if (filters.date_from > filters.date_to) throw new Error('INVALID_DATE_RANGE');
     const start = performance.now();
     for (const id of [filters.store_id, filters.brand_id, filters.model_id, filters.version_id]) {
@@ -200,6 +204,16 @@ const httpServer = http.createServer(async (req, res) => {
     const out = group_by === 'MONTH'
       ? { source, status: 'RAW_CANDIDATES_NOT_CERTIFIED', filters, group_by, series: result.rows, candidate_vins: result.rows.reduce((n, row) => n + row.candidate_vins, 0), elapsed_ms: Math.round(performance.now() - start), sql_executed: true, certified: false }
       : { source, status: 'RAW_CANDIDATES_NOT_CERTIFIED', filters, candidate_vins: result.rowCount, vins: result.rows.map(row => row.vin), elapsed_ms: Math.round(performance.now() - start), sql_executed: true, certified: false };
+    if (recognize) {
+      const prepared = await prepareSalesInput({candidateVins: out.vins});
+      const recognized = await dataset({filters}, prepared);
+      out.recognition = {
+        status: 'EXPERIMENTAL_PARTIAL_UNIVERSE_NOT_CERTIFIED',
+        vins: [...new Set(recognized.filtered.map(row => field(row, 'vin')))].sort(),
+        elapsed_total_ms: Math.round(performance.now() - start),
+        certified: false,
+      };
+    }
     return { structuredContent: out, content: [{ type: 'text', text: JSON.stringify(out) }] };
   });
   server.registerTool('sales_selective_probe', {
