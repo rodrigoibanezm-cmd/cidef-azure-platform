@@ -12,6 +12,8 @@ Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related ta
 
 **SALES SQL-first validator (2026-11-18):** `motor-test-azure/sales-sql-first-validate.js` registers read-only MCP tool `sales_sql_first_validate`. It compares complete vs diagnostic selective P1 and same-run scope isolation; requires a separate authorized MCP deploy before use. Default production SALES behavior remains SQL-first OFF. A diagnostic PASS does not certify global coverage unless every check passes. Details in `docs/SALES-SQL-FIRST-HANDOFF.md`.
 
+**SQL-first partial evidence (2026-11-18):** SELECTIVE SALES returns a distinct `p1.sql_first_partial_observation` / `PARTIAL_SOURCE` evidence contract, not global P1 certification. Its fact set carries exact source filters and rejects wider or different selections. Full-source P1 contract remains untouched. Run `sales_sql_first_validate` after authorized deploy; compare VIN/records/scope/isolation, not global coverage equality. SQL-first is OFF by default. See `docs/SALES-SQL-FIRST-HANDOFF.md`.
+
 **Motor performance work:** read `docs/MOTOR-LATENCY-IMPROVEMENT-LOG.md` before diagnosing, optimizing, or deploying P1/P2/P3/P4. It records the measured baseline, commits, deployment, and pending real-latency verification. Inspect current code/state; do not assume docs are live telemetry.
 
 - GOAL: replace Vercel + Neon with **one production stack on Azure**. Legacy runs only until cutover; never build permanent dual-stack.
