@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getSalesRunFactSet } from '../lib/data-floor/sales/preparation.js';
 import { field } from '../lib/data-floor/sales/dataset.js';
+import { observeSalesSelection } from '../lib/data-floor/sales/operations.js';
 
 // Read-only A/B diagnostic. A selective subset is never certified by this tool.
 export function registerSalesSqlFirstValidator(server) {
@@ -35,6 +36,8 @@ export function registerSalesSqlFirstValidator(server) {
         JSON.stringify(a).localeCompare(JSON.stringify(b)));
       return { rows, vins: [...new Set(rows.map(row => row.vin))].sort(),
         source_n: result.factSet.base.length,
+        source_scope: result.factSet.ref.source_scope??'FULL_SOURCE',
+        source_filters: result.factSet.ref.source_filters??null,
         coverage: result.factSet.u.coverage,
         validation: result.factSet.u.validation,
         preparation_id: result.factSet.ref.preparation_id,
@@ -54,10 +57,23 @@ export function registerSalesSqlFirstValidator(server) {
     const other = await measure({ ...common, candidate_filters: { ...filters, store_id: filters.store_id + 1 }, diagnostic_sql_first: true });
     const a = snapshot(full.result), b = snapshot(selective.result);
     const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+    const fullEvidence=observeSalesSelection(full.result.factSet.select(filters));
+    const partialEvidence=observeSalesSelection(selective.result.factSet.select(filters));
+    let outOfScopeRejected=false;
+    try { selective.result.factSet.select({...filters,store_id:filters.store_id+1}); }
+    catch(error) { outOfScopeRejected=error.message==='SALES_PARTIAL_SOURCE_FILTER_MISMATCH'; }
     const checks = {
       records_equal: same(a.rows, b.rows),
       vins_equal: same(a.vins, b.vins),
-      coverage_equal: same(a.coverage, b.coverage),
+      partial_scope_declared: a.source_scope==='FULL_SOURCE'&&b.source_scope==='PARTIAL_SOURCE',
+      partial_scope_exact: same(b.source_filters,selective.result.factSet.select(filters).canonical_filters),
+      out_of_scope_rejected: outOfScopeRejected,
+      partial_evidence_distinct: partialEvidence.status==='PARTIAL_SOURCE'&&
+        partialEvidence.authority==='P1_PARTIAL_SOURCE'&&
+        partialEvidence.evidence_contract==='p1.sql_first_partial_observation'&&
+        fullEvidence.status==='CERTIFIED'&&
+        fullEvidence.evidence_id!==partialEvidence.evidence_id,
+      observed_values_equal: fullEvidence.payload.value===partialEvidence.payload.value,
       validation_equal: same(a.validation, b.validation),
       same_scope_reused: repeat.result.preparations === 0 &&
         repeat.result.factSet.ref.preparation_id === b.preparation_id,
@@ -70,17 +86,18 @@ export function registerSalesSqlFirstValidator(server) {
       certification: 'DIAGNOSTIC_ONLY',
       filters, checks,
       baseline: { elapsed_ms: full.elapsed_ms, timings: full.timings, count: a.rows.length, vins: a.vins,
-        source_n: a.source_n, fact_set_fingerprint: a.fact_set_fingerprint,
+        source_n: a.source_n, source_scope:a.source_scope, evidence: {status:fullEvidence.status,value:fullEvidence.payload.value,contract:fullEvidence.evidence_contract}, fact_set_fingerprint: a.fact_set_fingerprint,
         selection_fingerprint: a.selection_fingerprint },
       selective: { elapsed_ms: selective.elapsed_ms, timings: selective.timings, count: b.rows.length, vins: b.vins,
-        source_n: b.source_n, fact_set_fingerprint: b.fact_set_fingerprint,
+        source_n: b.source_n, source_scope:b.source_scope, source_filters:b.source_filters,
+        evidence: {status:partialEvidence.status,value:partialEvidence.payload.value,contract:partialEvidence.evidence_contract}, fact_set_fingerprint: b.fact_set_fingerprint,
         selection_fingerprint: b.selection_fingerprint },
       isolation: { same_scope_repeat_ms: repeat.elapsed_ms, other_scope_ms: other.elapsed_ms, other_scope_timings: other.timings },
       timing_note: 'Loader *_ms metrics are elapsed-to-completion from concurrent preparation start; do not add them together.',
       differences: {
         missing_rows: a.rows.filter(row => !b.rows.some(other => same(row, other))).slice(0, 10),
         extra_rows: b.rows.filter(row => !a.rows.some(other => same(row, other))).slice(0, 10),
-        coverage: checks.coverage_equal ? null : { full: a.coverage, selective: b.coverage },
+        coverage: same(a.coverage,b.coverage) ? null : { full: a.coverage, selective: b.coverage },
         validation: checks.validation_equal ? null : { full: a.validation, selective: b.validation },
       },
     };
