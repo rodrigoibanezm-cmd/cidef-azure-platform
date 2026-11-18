@@ -42,9 +42,10 @@ export function registerSalesSqlFirstValidator(server) {
         selection_fingerprint: selection.fingerprint };
     };
     const measure = async opts => {
+      const timings = {};
       const start = performance.now();
-      const result = await getSalesRunFactSet(run_id, opts);
-      return { result, elapsed_ms: Math.round(performance.now() - start) };
+      const result = await getSalesRunFactSet(run_id, {...opts, diagnostic_timings:timings});
+      return { result, elapsed_ms: Math.round(performance.now() - start), timings };
     };
     const common = { commercial_universe: 'OWN_STORES', cutoff_date: filters.date_to };
     const full = await measure(common);
@@ -68,13 +69,14 @@ export function registerSalesSqlFirstValidator(server) {
       status: Object.values(checks).every(Boolean) ? 'PASS' : 'FAIL',
       certification: 'DIAGNOSTIC_ONLY',
       filters, checks,
-      baseline: { elapsed_ms: full.elapsed_ms, count: a.rows.length, vins: a.vins,
+      baseline: { elapsed_ms: full.elapsed_ms, timings: full.timings, count: a.rows.length, vins: a.vins,
         source_n: a.source_n, fact_set_fingerprint: a.fact_set_fingerprint,
         selection_fingerprint: a.selection_fingerprint },
-      selective: { elapsed_ms: selective.elapsed_ms, count: b.rows.length, vins: b.vins,
+      selective: { elapsed_ms: selective.elapsed_ms, timings: selective.timings, count: b.rows.length, vins: b.vins,
         source_n: b.source_n, fact_set_fingerprint: b.fact_set_fingerprint,
         selection_fingerprint: b.selection_fingerprint },
-      isolation: { same_scope_repeat_ms: repeat.elapsed_ms, other_scope_ms: other.elapsed_ms },
+      isolation: { same_scope_repeat_ms: repeat.elapsed_ms, other_scope_ms: other.elapsed_ms, other_scope_timings: other.timings },
+      timing_note: 'Loader *_ms metrics are elapsed-to-completion from concurrent preparation start; do not add them together.',
       differences: {
         missing_rows: a.rows.filter(row => !b.rows.some(other => same(row, other))).slice(0, 10),
         extra_rows: b.rows.filter(row => !a.rows.some(other => same(row, other))).slice(0, 10),
