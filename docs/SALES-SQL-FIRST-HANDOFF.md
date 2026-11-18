@@ -52,3 +52,14 @@ El cuello de botella medido incluye carga/preparación de datos globales para pr
 - No volver a proponer versiones mensuales, cachés persistentes o nuevas tablas.
 - No desplegar por iniciativa propia.
 - Informar en una línea qué cambió, commit, prueba y próximo bloqueo.
+
+## Avance 2026-11-18 — objetivo SQL-first por run
+- Selectividad agregada a `loadCommercialIdentityMap` y colores (VIN candidatos); sin filtros se mantiene ruta global.
+- `createRunUniverses` separa preparaciones por `run_id` + scope de candidatos, evitando contaminar observaciones con filtros diferentes en un mismo run. Sin almacenamiento persistente ni reutilización entre runs.
+- `getSalesRunFactSet()` puede preparar candidatos SQL-first para OWN_STORES + marca/modelo/sucursal numéricos + un mes; `observeSalesMany()` solo lo solicita cuando existe una única operación OBSERVE exacta. Resto conserva camino completo.
+- **Interruptor de seguridad:** `SALES_SQL_FIRST_ENABLED=true` es necesario para activar este nuevo camino. Por defecto permanece apagado. No habilitar en producción sin autorización y validación certificada.
+- Commits principales: `f244a343`, `bb1a6dfa` (identidad); `49be1520`, `b2ac7ad` (colores); `3fb8f6f`, `dd2a6ee`, `ba711846` (integración por run); `8023958` (flag apagado por defecto).
+- Verificación estática: sintaxis JS de los cinco archivos alterados OK. Prueba aislada de `createRunUniverses`: mismo run/scope reutiliza; scopes diferentes, global y otro run quedan separados.
+- Comparación real mediante MCP **desplegado anteriormente**, no código nuevo: 4 VIN contra 4 de P1, sin faltantes ni sobrantes; 5.731 ms selectivo vs 12.084 ms completo (medición aislada, no garantía de mejora general). `source_coverage_equal=false` sigue vigente. El probe no demuestra que el nuevo `getSalesRunFactSet` esté certificado ni mide la ruta aún no desplegada.
+- **Bloqueo de certificación:** la cobertura/huellas del universo parcial difieren del universo completo. No presentar resultados de la ruta nueva como certificados hasta definir y validar la equivalencia de calidad/evidencia con P1; las firmas de contenido no deben mezclarse entre scopes.
+- Próximo paso separado: ejecutar una validación de integración real en entorno no productivo, activando el flag solo allí, comparando VIN, campos, calidad, huellas y operación same-run con filtros distintos. Si no existe entorno seguro disponible, no habilitar el flag ni desplegar.
