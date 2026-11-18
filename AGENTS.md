@@ -8,6 +8,8 @@
 
 Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related tasks before each task.
 
+**P1 SALES SQL-first (handoff 2026-11-18):** read `docs/SALES-SQL-FIRST-HANDOFF.md` BEFORE continuing SALES latency or selective SQL work. It records decisions, evidence, commit `84771ae`, exact pending validation, and no cross-run caching. Read alongside the historical motor latency log.
+
 **Motor performance work:** read `docs/MOTOR-LATENCY-IMPROVEMENT-LOG.md` before diagnosing, optimizing, or deploying P1/P2/P3/P4. It records the measured baseline, commits, deployment, and pending real-latency verification. Inspect current code/state; do not assume docs are live telemetry.
 
 - GOAL: replace Vercel + Neon with **one production stack on Azure**. Legacy runs only until cutover; never build permanent dual-stack.
