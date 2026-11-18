@@ -71,3 +71,11 @@ El cuello de botella medido incluye carga/preparación de datos globales para pr
 - Diagnostic status is FAIL unless records, VINs, coverage, validation, and scope-isolation checks all match. Source-fact fingerprints are reported (not expected to be equal for a subset), and partial coverage remains an open blocker.
 - Code validation: syntax checks PASS for server, helper and preparation; registration, read-only annotation, opt-in and run-isolation guards checked. Live A/B requires authorized deploy of the existing MCP revision. Do not claim live validation yet.
 - Commits: `11168250` (date guard), `8bc95efe` (tool initial), `b21ac81f` (helper), `177691cb` (isolated registration). No production deploy executed.
+
+## Contrato diferencial de evidencia parcial (2026-11-18)
+- Objetivo: SQL-first no puede declarar `P1_CERTIFIED` global si solo leyó los VIN candidatos.
+- `getSalesRunFactSet` propaga los filtros exactos al fact set únicamente al usar SQL-first. `factSet.ref.source_scope='PARTIAL_SOURCE'` y `source_filters` describen esa cobertura. `select()` rechaza filtros diferentes o más amplios con `SALES_PARTIAL_SOURCE_FILTER_MISMATCH`.
+- `observeSalesSelection()` devuelve `authority='P1_PARTIAL_SOURCE'`, `status='PARTIAL_SOURCE'`, `evidence_contract='p1.sql_first_partial_observation'` para resultados escalares selectivos (sufijo diferencial para dimensiones). Nunca reutiliza los IDs de evidencia de P1 completo. Los resultados de fuente completa mantienen el contrato original.
+- `sales_sql_first_validate` exige igualdad de VIN, campos y valor, separación explícita de contratos, rechazo fuera de alcance y aislamiento dentro del run. **No exige igualdad de la cobertura global**; sigue mostrando la divergencia como dato de diagnóstico. Su PASS significa que cumple esos controles, no equivale a certificación global P1.
+- Comprobación realizada: sintaxis y guardas del código en GitHub; aún no hay prueba A/B en ejecución real de esta revisión. SQL-first normal sigue desactivado por defecto. No desplegar sin autorización.
+- Commits: `71004d61` / `435c0f7b` para scope en preparación/fact set; `85b68e11` / `b3eb752c` para contrato diferencial y validación MCP.
