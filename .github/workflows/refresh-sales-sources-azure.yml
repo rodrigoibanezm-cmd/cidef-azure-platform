@@ -79,9 +79,9 @@ jobs:
           container['args']=['scripts/refresh-sales-sources-azure.js','--dates',os.environ['SOURCE_DATE']]
           if raw_only: container['args'].append('--raw-only')
           container['env']=[e for e in container.get('env',[]) if e['name']!='CIDEF_ADMIN_EXECUTION_ID']
-          override={'template':{'containers':[container]}}
+          override={'containers':[container]}
           if template.get('initContainers'):
-              override['template']['initContainers']=template['initContainers']
+              override['initContainers']=template['initContainers']
           json.dump(override,open('override.json','w'))
           PY
           az rest --method post --url "https://management.azure.com${RESOURCE}/start?api-version=${API}" --headers 'Content-Type=application/json' --body @override.json --query '{name:name,id:id}' -o json
