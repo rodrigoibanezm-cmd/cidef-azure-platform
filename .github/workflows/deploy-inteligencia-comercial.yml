@@ -28,7 +28,7 @@ jobs:
             --resource-group rg-cidef-prod \
             --name cidef-intel-comercial-staging \
             --query 'properties.template.containers[0].image' -o tsv)
-          [[ "$IMAGE" == cidefprodacr.azurecr.io/cidef-inteligencia-comercial-staging:* ]] || {
+          [[ "$IMAGE" == cidefprodacr.azurecr.io/cidef-inteligencia-comercial-staging:* || "$IMAGE" == cidefprodacr.azurecr.io/cidef-inteligencia-comercial-staging@sha256:* ]] || {
             echo "::error::Unexpected staging image: $IMAGE"
             exit 1
           }
