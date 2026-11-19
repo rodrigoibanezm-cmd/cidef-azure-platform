@@ -97,6 +97,93 @@ export async function refreshDay({ client, container, date, loaders = LOADERS,
 }
 
 
+// RAW-only mode deliberately has independent idempotence from full SALES refresh.
+export async function refreshRawDay({ client, container, date, loaders = LOADERS, runId }) {
+  const files = await inspectDay(container, date);
+  const signature = sourceSignature(files);
+  const startedAt = Date.now();
+  let stage = 'begin_transaction';
+  await client.query('BEGIN');
+  try {
+    return await withSourceContext({ client, container, date, files }, async () => {
+      await queryDb(`CREATE TABLE IF NOT EXISTS public.sales_raw_refresh_runs (
+        source_date date NOT NULL, source_signature text NOT NULL, run_id uuid NOT NULL,
+        sources jsonb NOT NULL, result jsonb NOT NULL,
+        completed_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_date, source_signature)
+      )`);
+      const previous = await queryDb(`SELECT result FROM public.sales_raw_refresh_runs
+        WHERE source_date=$1::date AND source_signature=$2`, [date, signature]);
+      if (previous.length) {
+        await client.query('COMMIT');
+        return { date, runId, signature, status: 'ALREADY_LOADED', previous: previous[0].result };
+      }
+      const [latest] = await queryDb('SELECT max(source_date)::text AS date FROM public.sales_raw_refresh_runs');
+      if (latest.date && date < latest.date) {
+        throw new Error('Historical RAW replacement blocked: ' + date + ' before ' + latest.date);
+      }
+      stage = 'load_raw';
+      await queryDb('LOCK TABLE public.vehiculos_raw, public.ventas_raw, public.notas_venta_raw, public.notas_credito_raw IN SHARE ROW EXCLUSIVE MODE');
+      const sources = {};
+      for (let index = 0; index < TABLES.length; index++) {
+        stage = 'load_' + TABLES[index];
+        sources[TABLES[index]] = await loaders[index]();
+      }
+      const result = { engine: 'refresh_sales_raw_v01', date, runId, signature,
+        status: 'LOADED', sources, elapsedMs: Date.now() - startedAt };
+      stage = 'save_raw_history';
+      await queryDb(`INSERT INTO public.sales_raw_refresh_runs
+        (source_date, source_signature, run_id, sources, result)
+        VALUES ($1::date,$2,$3::uuid,$4::jsonb,$5::jsonb)`,
+      [date, signature, runId, JSON.stringify(files), JSON.stringify(result)]);
+      stage = 'commit';
+      await client.query('COMMIT');
+      return result;
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw Object.assign(error, { salesStage: stage });
+  }
+}
+
+export async function runSalesRawRefresh({ dates, container, pool, log = () => {}, loaders } = {}) {
+  const ordered = normalizeDates(dates);
+  container ||= createContainer();
+  if (!pool) {
+    const connection = process.env.AZURE_DATABASE_URL;
+    if (!connection || !new URL(connection).hostname.endsWith('.postgres.database.azure.com')) {
+      throw new Error('AZURE_DATABASE_URL must point to PostgreSQL Azure; no database fallback');
+    }
+    pool = getAzurePool();
+  }
+  const client = await pool.connect();
+  const runId = randomUUID();
+  let locked = false;
+  const results = [];
+  try {
+    const lock = await client.query('SELECT pg_try_advisory_lock(hashtext($1)) AS locked', [LOCK_NAME]);
+    locked = lock.rows[0].locked;
+    if (!locked) throw new Error('Another SALES refresh/synchronization is running');
+    for (const date of ordered) {
+      log({ runId, date, status: 'RUNNING', mode: 'RAW_ONLY' });
+      try {
+        const result = await refreshRawDay({ client, container, date, loaders, runId });
+        results.push(result);
+        log(result);
+      } catch (error) {
+        log({ runId, date, status: 'FAILED', stage: error.salesStage, mode: 'RAW_ONLY' });
+        throw Object.assign(error, { sourceDate: date, completedDates: results.map(r => r.date) });
+      }
+    }
+    return results;
+  } finally {
+    try {
+      if (locked) await client.query('SELECT pg_advisory_unlock(hashtext($1))', [LOCK_NAME]);
+      client.release();
+    } catch (error) { client.release(error); }
+  }
+}
+
 async function publishCurrentDealerSellin(period, cutoff, pool) {
   const filters = { commercial_universe: 'DEALERS', sales_source: 'SALES',
     date_from: period + '-01', date_to: cutoff };
