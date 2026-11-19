@@ -19,7 +19,7 @@ const FILE_PREFIX = 'ventas/Base_Unidades_por_Vistas_';
 const SHEET_NAME = 'Inventario Vehiculos Global';
 const TABLE_NAME = 'vehiculos_raw';
 
-export async function run() {
+export async function run({ skipRvmSync = false } = {}) {
   const startedAt = Date.now();
   const file = await findDailyXlsx(FILE_PREFIX);
   const buffer = await downloadBlobObject(file.Key);
@@ -57,7 +57,7 @@ export async function run() {
       SELECT count(*)::int AS rows_preserved FROM preserved
     `);
     await commitTableSnapshot(snapshot);
-    await syncVehiculosFromRvm();
+    if (!skipRvmSync) await syncVehiculosFromRvm();
     return {
       source: blobSource(file),
       sheet: SHEET_NAME,
