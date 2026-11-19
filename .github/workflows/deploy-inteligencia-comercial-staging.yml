@@ -191,7 +191,6 @@ jobs:
               "store selector":"id=\"store\"",
               "monthly sales chart":"id=\"monthTrend\"",
               "weekly sales chart":"id=\"weekTrend\"",
-              "closed-week chart":"id=\"closedTrend\"",
               "next-cutoff chart":"id=\"nextTrend\"",
               "projection tables":"<table",
               "store breakdown":"id=\"byStore\"",
