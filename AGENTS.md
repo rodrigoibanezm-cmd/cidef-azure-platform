@@ -29,3 +29,12 @@ Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related ta
 - No new branch/infrastructure, repeated loads or broad tests unless needed/requested. Work on `main`. On broad tasks: diagnosis -> proposal -> implementation, separately.
 - Report changes, evidence, failures, next blocker concisely. Never claim certification without validation.
 - Do not run tests, commercial audits/reconciliations, or analytical validation scripts in GitHub Actions. Deployment Actions build and deploy only. Any necessary checks are performed locally or manually outside Actions; do not reintroduce test/validation jobs without explicit user instruction.
+
+
+## SALES RAW-only — 2026-11-19
+- Objective: separate daily ingestion of the four RAW tables from canonical, dealer sell-out, dealer sell-in, P1 reconciliation and snapshot publishing. First code change on main: `b6b17b3`, `cbc8f36`. Only `src/loaders/sales/refresh.js` and `scripts/refresh-sales-sources-azure.js` were modified.
+- Explicit invocation: `node scripts/refresh-sales-sources-azure.js --dates YYYY-MM-DD --raw-only`. Default invocation is unchanged and still runs the full SALES refresh.
+- RAW-only uses existing four loaders, a single transaction per day, the same SALES advisory lock, and its own idempotence ledger `sales_raw_refresh_runs` keyed by date and source signature. It intentionally DOES NOT mark `sales_refresh_runs` complete. It does not explicitly call canonical, P1, sell-out, sell-in or snapshot publication; note that the existing vehicle RAW loader still calls `syncVehiculosFromRvm()` as part of its source logic.
+- Source preservation remains as implemented in the four existing loaders (sales by ID merge, vehicles preserve historical VIN, sales notes replace, credit notes append by source signature). Never assume all four are append-only.
+- Static code-level guard checks passed against GitHub content. **No local runtime tests or Azure execution yet, no deploy.** GitHub workflow `.github/workflows/refresh-sales-sources-azure.yml` currently invokes the old image without `--raw-only`; do not execute it expecting RAW-only. Do not deploy or modify production without explicit approval.
+- Next separately controlled stage: obtain a working non-production test environment and verify rollback, idempotence, preserved historical SALES and no canonical/snapshot changes; then prepare controlled deployment with approval. Do not claim operational certification before this verification.
