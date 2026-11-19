@@ -1,6 +1,6 @@
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { runSalesRefresh } from '../src/loaders/sales/refresh.js';
+import { runSalesRefresh, runSalesRawRefresh } from '../src/loaders/sales/refresh.js';
 import { validDate } from '../src/loaders/sales/source-io.js';
 import { closeAzurePool } from '../lib/azure-postgres.js';
 import { spawn } from 'node:child_process';
@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 export function requestedDates(argv) {
   const { values } = parseArgs({ args: argv, options: {
     dates: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' },
+    'raw-only': { type: 'boolean', default: false },
   } });
   if (values.dates && !values.from && !values.to) return values.dates.split(',');
   if (!values.dates && validDate(values.from) && validDate(values.to) && values.from <= values.to) {
@@ -22,16 +23,18 @@ export function requestedDates(argv) {
 
 export async function main(argv = process.argv.slice(2)) {
   const dates = requestedDates(argv);
+  const rawOnly = argv.includes('--raw-only');
   const url = process.env.AZURE_DATABASE_URL;
   if (!url || !new URL(url).hostname.endsWith('.postgres.database.azure.com')) {
     throw new Error('AZURE_DATABASE_URL must point to PostgreSQL Azure; no database fallback');
   }
   let refreshed;
   try {
-    refreshed = await runSalesRefresh({ dates, log: entry => console.log(JSON.stringify(entry)) });
+    refreshed = await (rawOnly ? runSalesRawRefresh : runSalesRefresh)({ dates, log: entry => console.log(JSON.stringify(entry)) });
   } finally {
     await closeAzurePool();
   }
+  if (rawOnly) return refreshed;
   // Publish only after a successful SALES load. This does not ingest FORUM files.
   await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['scripts/refresh-forum-ventas-snapshot-azure.js', '--publish-sales'], {
