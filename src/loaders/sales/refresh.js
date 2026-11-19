@@ -127,7 +127,7 @@ export async function refreshRawDay({ client, container, date, loaders = LOADERS
       const sources = {};
       for (let index = 0; index < TABLES.length; index++) {
         stage = 'load_' + TABLES[index];
-        sources[TABLES[index]] = await loaders[index]();
+        sources[TABLES[index]] = await loaders[index](index === 0 ? { skipRvmSync: true } : undefined);
       }
       const result = { engine: 'refresh_sales_raw_v01', date, runId, signature,
         status: 'LOADED', sources, elapsedMs: Date.now() - startedAt };
