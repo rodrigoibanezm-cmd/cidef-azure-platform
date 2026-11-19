@@ -6,7 +6,6 @@ export async function semanticSalesCandidates({
   store_id, model_id, brand_id, year, month, commercial_universe = 'OWN_STORES',
 }) {
   if (!['OWN_STORES','DEALERS'].includes(commercial_universe)) throw new Error('INVALID_COMMERCIAL_UNIVERSE');
-  if (commercial_universe === 'OWN_STORES' && store_id == null) throw new Error('STORE_REQUIRED');
   if (commercial_universe === 'DEALERS' && store_id != null) throw new Error('DEALER_SCOPE_DOES_NOT_USE_STORE');
   for (const id of [model_id, brand_id, ...(store_id == null ? [] : [store_id])]) {
     if (!Number.isSafeInteger(id) || id < 1) throw new Error('INVALID_ID');
