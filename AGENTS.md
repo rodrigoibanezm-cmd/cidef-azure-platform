@@ -45,3 +45,10 @@ Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related ta
 - The existing GitHub Action still targets the old full-refresh image. No new image built, no real DB tests, no deploy and no production changes. A safe isolated PostgreSQL/Azure Blob test environment is required before claiming historical parity, rollback, idempotence or readiness for production.
 
 SQL-first SALES (2026-11-19): candidatos DEALERS y agrupaciones OWN_STORES están implementados pero **sin prueba MCP posterior ni deploy**; no habilitar globalmente. Alcance, riesgos, casos de validación y commits en `docs/SALES-SQL-FIRST-HANDOFF.md`.
+
+
+## SALES RAW-only manual live trial — 2026-11-19
+- Build/run preparation completed in `Dockerfile.sales-refresh` and `.github/workflows/refresh-sales-sources-azure.yml` (commits `6004cb40`, `d23943cc`).
+- Existing workflow `Refresh SALES sources Azure` has a new optional checkbox `raw_only` (default false); for the real November 19, 2026 trial use `source_date=2026-11-19`, `raw_only=true`. Action builds/pushes a commit-addressed image only when manually dispatched with this option; starts a *one-off existing Azure Container Apps Job execution* with `--raw-only`. It does not alter the job's stored template or deploy front/MCP. Legacy path with `raw_only=false` remains unchanged.
+- This is a **production-write** job when triggered; no run was dispatched by the assistant. Confirm original four XLSX objects for that source date exist in Azure Blob before dispatch. Azure execution is not certified just by GitHub Action green; inspect the Container Apps job completion and RAW-only log. Verify 2021 history, source counts, and that canonical/snapshots were not modified.
+- Checked workflow guards via GitHub file read (manual dispatch, conditional image build, source-SHA tag, raw flag, unchanged legacy image). No Docker image build or live DB execution performed by assistant. Do not claim success yet.
