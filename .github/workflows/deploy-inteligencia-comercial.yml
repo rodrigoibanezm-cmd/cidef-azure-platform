@@ -37,7 +37,7 @@ jobs:
             --resource-group rg-cidef-prod \
             --name cidef-inteligencia-comercial \
             --image "$IMAGE" \
-            --set-env-vars PROJECTIONS_ENVIRONMENT=production \
+            --set-env-vars PROJECTIONS_ENVIRONMENT=staging \
             --output none
           DEPLOYED=$(az containerapp show \
             --resource-group rg-cidef-prod \
