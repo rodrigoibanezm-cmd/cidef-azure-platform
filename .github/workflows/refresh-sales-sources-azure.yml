@@ -7,6 +7,10 @@ on:
         description: 'Fecha de los archivos SALES (YYYY-MM-DD)'
         required: true
         type: string
+      raw_only:
+        description: 'Solo cargar RAW (sin canónico, sell-out, sell-in ni snapshots)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,9 +40,25 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Checkout for RAW-only image
+        if: ${{ inputs.raw_only }}
+        uses: actions/checkout@v4
+
+      - name: Build and push RAW-only image (manual run)
+        if: ${{ inputs.raw_only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name cidefprodacr
+          IMAGE="cidefprodacr.azurecr.io/cidef-data-loader:sales-raw-${GITHUB_SHA::12}"
+          docker build -f Dockerfile.sales-refresh -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "RAW_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
       - name: Start existing SALES job with per-execution override
         env:
           SOURCE_DATE: ${{ inputs.source_date }}
+          RAW_ONLY: ${{ inputs.raw_only }}
         shell: bash
         run: |
           set -euo pipefail
@@ -52,9 +72,12 @@ jobs:
           template=job['properties']['template']
           assert len(template['containers'])==1
           container=copy.deepcopy(template['containers'][0])
-          container['image']='cidefprodacr.azurecr.io/cidef-data-loader:sales-7d5aa22'
+          raw_only = os.environ['RAW_ONLY'].lower() == 'true'
+          container['image']=(os.environ['RAW_IMAGE'] if raw_only else
+              'cidefprodacr.azurecr.io/cidef-data-loader:sales-7d5aa22')
           container['command']=['node']
           container['args']=['scripts/refresh-sales-sources-azure.js','--dates',os.environ['SOURCE_DATE']]
+          if raw_only: container['args'].append('--raw-only')
           container['env']=[e for e in container.get('env',[]) if e['name']!='CIDEF_ADMIN_EXECUTION_ID']
           override={'template':{'containers':[container]}}
           if template.get('initContainers'):
