@@ -3,9 +3,12 @@
 import { queryDb } from '../lib/neon.js';
 
 export async function semanticSalesCandidates({
-  store_id, model_id, brand_id, year, month,
+  store_id, model_id, brand_id, year, month, commercial_universe = 'OWN_STORES',
 }) {
-  for (const id of [store_id, model_id, brand_id]) {
+  if (!['OWN_STORES','DEALERS'].includes(commercial_universe)) throw new Error('INVALID_COMMERCIAL_UNIVERSE');
+  if (commercial_universe === 'OWN_STORES' && store_id == null) throw new Error('STORE_REQUIRED');
+  if (commercial_universe === 'DEALERS' && store_id != null) throw new Error('DEALER_SCOPE_DOES_NOT_USE_STORE');
+  for (const id of [model_id, brand_id, ...(store_id == null ? [] : [store_id])]) {
     if (!Number.isSafeInteger(id) || id < 1) throw new Error('INVALID_ID');
   }
   if (!Number.isSafeInteger(year) || year < 2020 || year > 2100 ||
@@ -18,17 +21,17 @@ export async function semanticSalesCandidates({
   const sql = `
     SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin
     FROM ventas_raw v
-    WHERE btrim(v.categoria_cliente) IN ('Cliente General','Concesionaria')
+    WHERE btrim(v.categoria_cliente) = $5
       AND nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL
       AND btrim(v.fecha_factura) ~ $1
-      AND (EXISTS (
+      ${store_id != null ? `AND (EXISTS (
         SELECT 1 FROM sucursales_master s
         WHERE s.sucursal_id = $2
           AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text)
       ) OR EXISTS (
         SELECT 1 FROM vehiculo_canonico vc
         WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = $2
-      ))
+      ))` : ''}
       AND (EXISTS (
         SELECT 1 FROM producto_aliases_v01 a
         JOIN modelos_master_v01 m ON m.modelo_id = a.modelo_id
@@ -45,7 +48,8 @@ export async function semanticSalesCandidates({
       ))
     ORDER BY vin`;
   const start = performance.now();
-  const rows = await queryDb(sql, [datePattern, store_id, model_id, brand_id]);
+  const rows = await queryDb(sql, [datePattern, store_id, model_id, brand_id,
+    commercial_universe === 'DEALERS' ? 'Concesionaria' : 'Cliente General']);
   return { vins: rows.map(row => row.vin), count: rows.length,
     elapsed_ms: Math.round(performance.now() - start),
     status: 'CANDIDATES_ONLY_NOT_CERTIFIED' };
