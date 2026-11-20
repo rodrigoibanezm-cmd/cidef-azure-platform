@@ -3,12 +3,12 @@
 import { queryDb } from '../lib/neon.js';
 
 export async function semanticSalesCandidates({
-  store_id, dealer_id, model_id, brand_id, year, month, commercial_universe = 'OWN_STORES',
+  store_id, dealer_id, seller_id, model_id, brand_id, year, month, commercial_universe = 'OWN_STORES',
 }) {
   if (!['OWN_STORES','DEALERS'].includes(commercial_universe)) throw new Error('INVALID_COMMERCIAL_UNIVERSE');
   if (commercial_universe === 'DEALERS' && store_id != null) throw new Error('DEALER_SCOPE_DOES_NOT_USE_STORE');
   if (commercial_universe !== 'DEALERS' && dealer_id != null) throw new Error('DEALER_ID_REQUIRES_DEALERS');
-  for (const id of [model_id, brand_id, ...(store_id == null ? [] : [store_id]), ...(dealer_id == null ? [] : [dealer_id])]) {
+  for (const id of [model_id, brand_id, ...(store_id == null ? [] : [store_id]), ...(dealer_id == null ? [] : [dealer_id]), ...(seller_id == null ? [] : [seller_id])]) {
     if (!Number.isSafeInteger(id) || id < 1) throw new Error('INVALID_ID');
   }
   if (!Number.isSafeInteger(year) || year < 2020 || year > 2100 ||
@@ -22,6 +22,7 @@ export async function semanticSalesCandidates({
     commercial_universe==='DEALERS'?'Concesionaria':'Cliente General'];
   if(store_id!=null)params.push(store_id);
   if(dealer_id!=null)params.push(dealer_id);
+  const sellerParam=seller_id==null?null:params.push(seller_id);
   const sql = `
     SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin
     FROM ventas_raw v
@@ -46,6 +47,13 @@ export async function semanticSalesCandidates({
         SELECT 1 FROM vehiculo_canonico vc
         WHERE vc.vin = v.nro_vin_chasis AND vc.dealer_id = $5
       ))` : ''}
+      ${sellerParam != null ? `AND EXISTS (
+        SELECT 1 FROM personas_master pm
+        WHERE pm.persona_id = ${sellerParam}
+          AND pm.usuario_canonico::text = v.nombre_usuario::text
+          AND (SELECT COUNT(*) FROM personas_master px
+               WHERE px.usuario_canonico::text = pm.usuario_canonico::text) = 1
+      )` : ''}
       AND (EXISTS (
         SELECT 1 FROM producto_aliases_v01 a
         JOIN modelos_master_v01 m ON m.modelo_id = a.modelo_id
