@@ -3,11 +3,12 @@
 import { queryDb } from '../lib/neon.js';
 
 export async function semanticSalesCandidates({
-  store_id, model_id, brand_id, year, month, commercial_universe = 'OWN_STORES',
+  store_id, dealer_id, model_id, brand_id, year, month, commercial_universe = 'OWN_STORES',
 }) {
   if (!['OWN_STORES','DEALERS'].includes(commercial_universe)) throw new Error('INVALID_COMMERCIAL_UNIVERSE');
   if (commercial_universe === 'DEALERS' && store_id != null) throw new Error('DEALER_SCOPE_DOES_NOT_USE_STORE');
-  for (const id of [model_id, brand_id, ...(store_id == null ? [] : [store_id])]) {
+  if (commercial_universe !== 'DEALERS' && dealer_id != null) throw new Error('DEALER_ID_REQUIRES_DEALERS');
+  for (const id of [model_id, brand_id, ...(store_id == null ? [] : [store_id]), ...(dealer_id == null ? [] : [dealer_id])]) {
     if (!Number.isSafeInteger(id) || id < 1) throw new Error('INVALID_ID');
   }
   if (!Number.isSafeInteger(year) || year < 2020 || year > 2100 ||
@@ -20,6 +21,7 @@ export async function semanticSalesCandidates({
   const params=[datePattern,model_id,brand_id,
     commercial_universe==='DEALERS'?'Concesionaria':'Cliente General'];
   if(store_id!=null)params.push(store_id);
+  if(dealer_id!=null)params.push(dealer_id);
   const sql = `
     SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin
     FROM ventas_raw v
@@ -33,6 +35,16 @@ export async function semanticSalesCandidates({
       ) OR EXISTS (
         SELECT 1 FROM vehiculo_canonico vc
         WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = $5
+      ))` : ''}
+      ${dealer_id != null ? `AND (EXISTS (
+        SELECT 1 FROM dealers_master d
+        WHERE d.dealer_id = $5
+          AND d.rut_normalizado IS NOT NULL
+          AND regexp_replace(v.cliente, '[^0-9]', '', 'g') =
+              regexp_replace(d.rut_normalizado, '[^0-9]', '', 'g')
+      ) OR EXISTS (
+        SELECT 1 FROM vehiculo_canonico vc
+        WHERE vc.vin = v.nro_vin_chasis AND vc.dealer_id = $5
       ))` : ''}
       AND (EXISTS (
         SELECT 1 FROM producto_aliases_v01 a
