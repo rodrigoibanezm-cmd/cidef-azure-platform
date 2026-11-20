@@ -59,8 +59,8 @@ export function planSalesCandidates(filters, cutoffDate) {
   const {commercial_universe:universe,date_from:from,date_to:to,brand_id:brand,model_id:model,...rest} = filters;
   if (!['OWN_STORES','DEALERS'].includes(universe) ||
       !positiveId(brand) || !positiveId(model) ||
-      !/^\\d{4}-\\d{2}-01$/.test(from ?? '') ||
-      !/^\\d{4}-\\d{2}-\\d{2}$/.test(to ?? '') ||
+      !/^\d{4}-\d{2}-01$/.test(from ?? '') ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(to ?? '') ||
       from.slice(0,7) !== to.slice(0,7) || to !== cutoffDate ||
       (universe==='DEALERS' && rest.store_id != null) ||
       (universe!=='DEALERS' && rest.dealer_id != null) ||
