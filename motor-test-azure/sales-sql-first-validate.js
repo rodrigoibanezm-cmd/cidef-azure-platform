@@ -16,6 +16,7 @@ export function registerSalesSqlFirstValidator(server) {
       model_id: z.number().int().positive(),
       store_id: z.number().int().positive().optional(),
       dealer_id: z.number().int().positive().optional(),
+      seller_id: z.number().int().positive().optional(),
       date_from: z.string().regex(/^\d{4}-\d{2}-01$/),
       date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     },
@@ -58,7 +59,7 @@ export function registerSalesSqlFirstValidator(server) {
       return { result, elapsed_ms: Math.round(performance.now() - start), timings };
     };
     const common = { commercial_universe: filters.commercial_universe, cutoff_date: filters.date_to };
-    const differentFilters={...filters,...(filters.dealer_id!=null?{dealer_id:filters.dealer_id+1}:filters.store_id==null?{model_id:filters.model_id+1}:{store_id:filters.store_id+1})};
+    const differentFilters={...filters,...(filters.seller_id!=null?{seller_id:filters.seller_id+1}:filters.dealer_id!=null?{dealer_id:filters.dealer_id+1}:filters.store_id==null?{model_id:filters.model_id+1}:{store_id:filters.store_id+1})};
     const full = await measure(common);
     const selective = await measure({ ...common, candidate_filters: filters, diagnostic_sql_first: true });
     const repeat = await measure({ ...common, candidate_filters: filters, diagnostic_sql_first: true });
