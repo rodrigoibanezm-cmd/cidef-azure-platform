@@ -15,6 +15,7 @@ export function registerSalesSqlFirstValidator(server) {
       brand_id: z.number().int().positive(),
       model_id: z.number().int().positive(),
       store_id: z.number().int().positive().optional(),
+      dealer_id: z.number().int().positive().optional(),
       date_from: z.string().regex(/^\d{4}-\d{2}-01$/),
       date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     },
@@ -22,6 +23,7 @@ export function registerSalesSqlFirstValidator(server) {
   }, async (input) => {
     const {group_by, ...filters}=input;
     if(filters.commercial_universe==='DEALERS'&&filters.store_id!=null)throw new Error('DEALERS_STORE_NOT_SUPPORTED');
+    if(filters.commercial_universe!=='DEALERS'&&filters.dealer_id!=null)throw new Error('DEALER_ID_REQUIRES_DEALERS');
     if(group_by==='STORE'&&filters.commercial_universe!=='OWN_STORES')throw new Error('STORE_GROUP_REQUIRES_OWN_STORES');
     if(group_by==='DEALER_GROUP'&&filters.commercial_universe!=='DEALERS')throw new Error('DEALER_GROUP_REQUIRES_DEALERS');
     if (filters.date_from.slice(0, 7) !== filters.date_to.slice(0, 7))
@@ -56,7 +58,7 @@ export function registerSalesSqlFirstValidator(server) {
       return { result, elapsed_ms: Math.round(performance.now() - start), timings };
     };
     const common = { commercial_universe: filters.commercial_universe, cutoff_date: filters.date_to };
-    const differentFilters={...filters,...(filters.store_id==null?{model_id:filters.model_id+1}:{store_id:filters.store_id+1})};
+    const differentFilters={...filters,...(filters.dealer_id!=null?{dealer_id:filters.dealer_id+1}:filters.store_id==null?{model_id:filters.model_id+1}:{store_id:filters.store_id+1})};
     const full = await measure(common);
     const selective = await measure({ ...common, candidate_filters: filters, diagnostic_sql_first: true });
     const repeat = await measure({ ...common, candidate_filters: filters, diagnostic_sql_first: true });
