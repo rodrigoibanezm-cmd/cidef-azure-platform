@@ -70,7 +70,20 @@ export function planSalesCandidates(filters, cutoffDate) {
     month:Number(from.slice(5,7)),commercial_universe:universe});
 }
 
-export async function semanticSalesCandidates(plan) {
+export async function semanticSalesCandidates(input) {
+  // Preserve the original diagnostic reader contract for existing callers.
+  const plan = input?.filters ? input : (() => {
+    const {year,month,commercial_universe='OWN_STORES',...dimensions}=input??{};
+    if (!Number.isSafeInteger(year)||!Number.isSafeInteger(month)||
+        year<2020||year>2100||month<1||month>12)
+      throw new Error('INVALID_PERIOD');
+    const mm=String(month).padStart(2,'0');
+    const date_from=year+'-'+mm+'-01';
+    const date_to=new Date(Date.UTC(year,month,0)).toISOString().slice(0,10);
+    const filters={commercial_universe,date_from,date_to,...dimensions};
+    return planSalesCandidates(filters,date_to);
+  })();
+  if (!plan) throw new Error('UNSUPPORTED_SALES_CANDIDATE_PLAN');
   const {filters,year,month,commercial_universe:universe}=plan;
   if (!planSalesCandidates(filters,filters.date_to)) throw new Error('UNSUPPORTED_SALES_CANDIDATE_PLAN');
   const params=[];
