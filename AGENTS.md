@@ -6,6 +6,16 @@
 3. Buscar y reutilizar primero lo existente; no reinventar la rueda.
 4. Antes de modificar código o arquitectura, evaluar si el cambio es necesario y si existe una alternativa más simple.
 
+## Metodología permanente de desarrollo — 2026-11-20
+- Definir y ejecutar **objetivos completos**, no una secuencia de microtareas sujetas a aprobación individual.
+- Una autorización del objetivo habilita autónomamente diagnóstico, implementación, pruebas mínimas suficientes, correcciones y documentación, incluidos los archivos y commits necesarios dentro de ese objetivo.
+- Reutilizar código, contratos y herramientas existentes; no implementar casos particulares ni crear una MCP tool para cada filtro, operación o pregunta. Preferir capacidades declarativas genéricas.
+- Configurar GitHub Actions para build, tests automatizados acotados, controles de seguridad y validaciones seguras. **Separar CI (sin despliegue ni escrituras a producción) de workflows de despliegue**, que siguen requiriendo autorización específica. No añadir pruebas comerciales contra producción ni escrituras destructivas al CI.
+- No alterar componentes productivos existentes que ya funcionan ni habilitar nuevos caminos de producción sin aprobación explícita.
+- Detener el objetivo solo por riesgo crítico, decisión comercial pendiente o cambio irreversible; informar esos bloqueos.
+- Mantener AGENTS.md y la documentación de handoff actualizados para continuar en otro chat. Entregar resultados, faltantes y evidencia, sin solicitar autorización por archivo/commit/prueba.
+- Priorizar cambios pequeños y verificables, pruebas proporcionadas al riesgo y commits claros. El límite anterior de dos archivos y ejecución separada de cada microcambio no restringe un objetivo completo expresamente autorizado; el despliegue permanece separado.
+
 Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related tasks before each task.
 
 **P1 SALES SQL-first (handoff 2026-11-18):** read `docs/SALES-SQL-FIRST-HANDOFF.md` BEFORE continuing SALES latency work. SQL-first selective run integration is on `main`, **default OFF** (`SALES_SQL_FIRST_ENABLED` must be `true` to opt in). Do not enable or deploy without explicit authorization and live certification; partial global source coverage is unresolved. Reuse only within one run; never cross-run. Read alongside the historical motor latency log.
@@ -26,9 +36,9 @@ Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related ta
 - COMPANY KPIs: SALES VIN, FORUM QUOTATIONS, PRECURSE (distinct from APPLICATIONS), FORUM UFIS, RVM registrations, RVM share. Every KPI: Company/FOTON/DONGFENG, temporal series and certified cutoff. P1 facts; P2 derived measures. No uncertified brand merging (RVM DFM/DONGFENG/DONG FENG).
 - **Cómo vamos envs:** staging and production MUST share the SAME three certified snapshot tables in the SAME Azure PostgreSQL and reuse the SAME P1/P2/P3 pipelines, signatures, locks, and read API. Isolation is frontend code/deployment only. DO NOT create staging snapshot copies, separate DB/schema, duplicate engines, new backend services, Container Apps, or Actions for this feature without explicit user approval. No new Como vamos staging deployment yet; defer until front is advanced enough. See `docs/COMO-VAMOS-SNAPSHOTS.md`.
 - Front need not depend on remote MCP; server-side API can call certified P1/P2/P3 contracts. Verify current deployed interface. Snapshot architecture: `docs/COMO-VAMOS-SNAPSHOTS.md`.
-- No new branch/infrastructure, repeated loads or broad tests unless needed/requested. Work on `main`. On broad tasks: diagnosis -> proposal -> implementation, separately.
+- No new branch/infrastructure or unnecessary repeated loads. Work on `main`. For an authorized objective, diagnose -> implement -> minimally test -> correct -> document autonomously; split commits by coherent change.
 - Report changes, evidence, failures, next blocker concisely. Never claim certification without validation.
-- Do not run tests, commercial audits/reconciliations, or analytical validation scripts in GitHub Actions. Deployment Actions build and deploy only. Any necessary checks are performed locally or manually outside Actions; do not reintroduce test/validation jobs without explicit user instruction.
+- CI GitHub Actions may run isolated build, unit tests, security controls and safe validation on each change. Keep deployment workflows separately triggered/authorized; never use CI to run production commercial audits, production data writes, or automatic deployments.
 
 
 ## SALES RAW-only — 2026-11-19
