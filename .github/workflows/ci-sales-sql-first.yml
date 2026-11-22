@@ -1,0 +1,40 @@
+name: CI SALES SQL-first
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/semantic-sales-prototype.mjs'
+      - 'lib/data-floor/sales/preparation.js'
+      - 'lib/data-floor/salesCertifier.js'
+      - 'lib/data-floor/registry.js'
+      - 'test/sales-sql-first-planner.test.js'
+      - '.github/workflows/ci-sales-sql-first.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies without lifecycle scripts
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Syntax checks
+        run: |
+          node --check scripts/semantic-sales-prototype.mjs
+          node --check lib/data-floor/sales/preparation.js
+          node --check lib/data-floor/salesCertifier.js
+          node --check lib/data-floor/registry.js
+      - name: Isolated planner regression tests
+        run: node --test test/sales-sql-first-planner.test.js
+      - name: Critical dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=critical
+
+# Read-only CI: never authenticate to Azure, query production, or deploy.
