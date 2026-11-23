@@ -1,16 +1,33 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { getAzurePool, closeAzurePool, azureCompatibleSql } from '../lib/azure-postgres.js';
 import { refreshVehiculoCanonicoV01 } from '../lib/canonical/refresh-vehiculo-canonico-v01.js';
 import { refreshDealerSellout } from '../lib/data-floor/refreshDealerSellout.js';
 import { validDate } from '../src/loaders/sales/source-io.js';
+import { publishCurrentDealerSellin } from '../src/loaders/sales/refresh.js';
 
 const LOCK = 'cidef_ventas_raw_neon_azure_sync';
 const INPUTS = ['vehiculos_raw', 'ventas_raw', 'notas_venta_raw',
   'producto_aliases_v01', 'dealers_master', 'dealer_aliases',
   'sucursales_master', 'sucursal_aliases'];
 const emit = value => console.log(JSON.stringify(value));
+const FORUM_INPUTS = ['forum_funnel_raw', 'ventas_raw', 'vehiculos_raw',
+  'sucursales_master','dealers_master','dealer_groups','dealer_aliases',
+  'sucursal_aliases','producto_aliases_v01','marcas_master_v01','modelos_master_v01',
+  'versiones_master_v01','personas_master','persona_aliases','persona_roles','persona_sucursal'];
+async function publishForumSnapshot() {
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['scripts/refresh-forum-ventas-snapshot-azure.js', '--publish-sales'], {
+      stdio: 'inherit', env: { ...process.env, FORUM_SNAPSHOT_PUBLISHER: 'azure-platform' },
+    });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => code === 0 ? resolve() :
+      reject(new Error('FORUM_SNAPSHOT_NOT_PUBLISHED: ' + (signal || code))));
+  });
+  return { published: true };
+}
 const sql = (client, text, values = []) =>
   client.query(azureCompatibleSql(text), values).then(result => result.rows);
 
@@ -102,7 +119,20 @@ export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
     const selloutSignature = await fingerprint(client, ['vehiculo_canonico']);
     await runStage(client, cutoff, 'dealer_monthly_sellout_snapshots', selloutSignature,
       () => refreshDealerSellout((text, values) => sql(client, text, values)));
-    return { status: 'COMPLETED', source_dates: ordered, current_state_date: cutoff };
+    const month = cutoff.slice(0, 7);
+    const sellinSignature = await fingerprint(client, ['ventas_raw','vehiculo_canonico',
+      'dealers_master','dealer_groups','producto_aliases_v01']);
+    await runStage(client, cutoff, 'dealer_monthly_model_sellin_snapshots', sellinSignature,
+      () => publishCurrentDealerSellin(month, cutoff, pool, client));
+    // The existing publisher already performs certified P1 reconciliation, per-bundle
+    // signatures, selective rebuild and atomic publication. Never duplicate its formulas.
+    const forumSignature = await fingerprint(client, [...FORUM_INPUTS, 'vehiculo_canonico',
+      'dealer_monthly_model_sellin_snapshots']);
+    await runStage(client, cutoff, 'forum_ventas_snapshot_v01', forumSignature,
+      () => publishForumSnapshot());
+    return { status: 'COMPLETED', source_dates: ordered, current_state_date: cutoff,
+      stages: ['vehiculo_canonico','dealer_monthly_sellout_snapshots',
+        'dealer_monthly_model_sellin_snapshots','forum_ventas_snapshot_v01'] };
   } finally {
     try { if (locked) await sql(client, 'SELECT pg_advisory_unlock(hashtext($1))', [LOCK]); }
     finally { client.release(); }
