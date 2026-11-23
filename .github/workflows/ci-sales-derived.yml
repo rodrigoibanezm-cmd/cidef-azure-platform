@@ -5,6 +5,7 @@ on:
       - 'scripts/refresh-sales-derived-azure.js'
       - 'Dockerfile.sales-refresh'
       - 'src/loaders/sales/refresh.js'
+      - 'src/loaders/sales/sync-vehiculos-rvm.js'
       - 'test/sales-derived-orchestration.test.js'
       - '.github/workflows/ci-sales-derived.yml'
   workflow_dispatch:
@@ -23,6 +24,7 @@ jobs:
           node --check scripts/refresh-sales-derived-azure.js
           node --check scripts/refresh-forum-ventas-snapshot-azure.js
           node --check src/loaders/sales/refresh.js
+          node --check src/loaders/sales/sync-vehiculos-rvm.js
           if grep -Eq 'runSalesRawRefresh|runSalesRefresh' scripts/refresh-sales-derived-azure.js; then
             echo "::error::Derivadas no deben cargar RAW"
             exit 1
