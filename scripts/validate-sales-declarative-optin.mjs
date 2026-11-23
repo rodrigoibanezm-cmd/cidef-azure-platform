@@ -27,7 +27,7 @@ try {
   const selective = await observe(true);
   assert.equal(selective.evidence.authority,'P1_PARTIAL_SOURCE');
   assert.equal(selective.evidence.status,'PARTIAL_SOURCE');
-  assert.match(selective.evidence.evidence_contract,/^p1\\.sql_first_partial_/);
+  assert.match(selective.evidence.evidence_contract,/^p1\.sql_first_partial_/);
   assert.equal(selective.evidence.payload.observed_value,full.evidence.payload.observed_value);
   assert.equal(selective.evidence.coverage.source_n,4);
   assert.equal(selective.evidence.coverage.source_scope,'PARTIAL_SOURCE');
