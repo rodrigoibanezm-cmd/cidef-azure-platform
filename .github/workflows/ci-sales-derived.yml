@@ -19,8 +19,10 @@ jobs:
         run: |
           set -euo pipefail
           node --check scripts/refresh-sales-derived-azure.js
-          if grep -Eq 'runSalesRawRefresh|runSalesRefresh|--publish' scripts/refresh-sales-derived-azure.js; then
-            echo "::error::Derivadas no deben cargar RAW ni publicar snapshots"
+          node --check scripts/refresh-forum-ventas-snapshot-azure.js
+          node --check src/loaders/sales/refresh.js
+          if grep -Eq 'runSalesRawRefresh|runSalesRefresh' scripts/refresh-sales-derived-azure.js; then
+            echo "::error::Derivadas no deben cargar RAW"
             exit 1
           fi
       - name: Construir imagen local sin publicar ni ejecutar en Azure
