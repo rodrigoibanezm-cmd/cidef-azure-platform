@@ -120,3 +120,9 @@ SQL-first SALES (2026-11-19): candidatos DEALERS y agrupaciones OWN_STORES está
 - OWN_STORES brand_id=89 model_id=28 seller_id=232 Aug 2026: 4 vs 4 VIN; full 27,932 ms vs selective 1,820 ms.
 - DEALERS brand_id=89 model_id=28 grouped DEALER_GROUP Aug 2026: 199 vs 199 VIN; full 30,369 ms vs selective 3,279 ms.
 - All return `DIAGNOSTIC_ONLY`; SQL-first opt-in flag production status not changed here. **This does not yet validate real declarative `data_observe` with SQL-first enabled**. Verify in safe nonproduction controlled environment before activating in production; never label `PARTIAL_SOURCE` as global P1 certification.
+
+## Controlled declarative SQL-first validation — 2026-11-23 (manual Action, not executed)
+- The single deployed motor-test-azure Container App has no request-scoped switch to opt in to SQL-first; setting SALES_SQL_FIRST_ENABLED=true on its configuration would impact all concurrent requests and is **not** a safe isolated test.
+- Existing `scripts/validate-sales-declarative-optin.mjs` uses the actual `resolveDataObservation` P1 routing in a separate ephemeral Node process, against the same Azure PostgreSQL. It compares flag OFF full P1 against flag ON partial evidence for Pajaritos Foton G7 August 2026; checks 4 VIN, partial scope, authority, distinct evidence IDs and no partial temporal fingerprint.
+- Trigger via manual `.github/workflows/validate-sales-declarative-optin.yml`. Its flag changes **only the Action process**, never the Container App configuration, and it does not deploy. This is the controlled validation without staging or new infrastructure.
+- **Pending:** workflow execution and review of actual results. This validates the core declarative resolver with real data, **not** network invocation of the production MCP with global flag on. Avoid claiming full production activation or universal certification.
