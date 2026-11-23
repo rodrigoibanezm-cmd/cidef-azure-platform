@@ -1,0 +1,25 @@
+name: Diagnose FORUM Azure SQL plan (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install PostgreSQL driver
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund pg@8.16.3
+      - name: Explain live FORUM query and compare session-local planner strategy
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: node scripts/diagnose-forum-plan-azure.mjs
+# No schema changes or deployment. Planner override is transaction-local and rolled back.
