@@ -46,7 +46,7 @@ test('legacy SALES dataset never loads VIN candidates without partial evidence',
     recognize: (options) => { calls.push({recognize:options}); return {u:{},base:full}; },
   };
   const dataset = new Function('normalize','prepareSalesInput','match',
-    body + '\\nreturn dataset;')(
+    body + '\nreturn dataset;')(
     input => ({filters:input.filters,commercial_universe:'OWN_STORES',sales_source:'AUTO'}),
     async (...args) => {calls.push({preparation:args});return prepared;},
     () => true,
