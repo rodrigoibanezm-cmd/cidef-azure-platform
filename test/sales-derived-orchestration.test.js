@@ -14,6 +14,10 @@ test('derived runner reuses certified publishers without reloading RAW', async (
   assert.match(runner, /publishCurrentDealerSellin\(month, cutoff, pool, client\)/);
   assert.match(runner, /refresh-forum-ventas-snapshot-azure\.js/);
   assert.match(runner, /source_date,stage,input_signature/);
+  assert.ok(runner.indexOf("'vehiculos_raw_rvm_sync'") < runner.indexOf("'vehiculo_canonico'"));
+  assert.match(runner, /syncVehiculosFromRvm\(\(text, values\) => sql\(client, text, values\)/);
+  assert.match(runner, /onlyChanged: true/);
+  assert.match(runner, /latest_rvm_ingestion/);
   assert.match(runner, /ROLLBACK/);
 });
 
@@ -24,4 +28,19 @@ test('existing full SALES flow and derived transaction contract remain supported
   assert.match(code, /if \(!transactionClient\) await client\.query\('BEGIN'\)/);
   assert.match(code, /if \(!transactionClient\) await client\.query\('COMMIT'\)/);
   assert.match(code, /if \(!transactionClient\) client\.release\(\)/);
+});
+
+test('RVM sync is change-only for derived runs; existing default is unchanged', async () => {
+  const { syncVehiculosFromRvm } = await import('../src/loaders/sales/sync-vehiculos-rvm.js');
+  const statements = [];
+  const execute = async (sql, params = []) => {
+    statements.push({ sql, params });
+    return sql.includes('SELECT count(*)::int AS rows_updated') ? [{ rows_updated: 3 }] : [];
+  };
+  assert.deepEqual(await syncVehiculosFromRvm(execute, { onlyChanged: true }), { rows_updated: 3 });
+  assert.deepEqual(statements.at(-1).params, [true]);
+  assert.match(statements.at(-1).sql, /IS DISTINCT FROM \(p.new_date, p.new_plate, p.new_status\)/);
+  statements.length = 0;
+  await syncVehiculosFromRvm(execute);
+  assert.deepEqual(statements.at(-1).params, [false]);
 });
