@@ -29,6 +29,8 @@ jobs:
             echo "::error::Derivadas no deben cargar RAW"
             exit 1
           fi
+      - name: Dependencias existentes para pruebas de módulos
+        run: npm install --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Prueba focalizada de orquestación
         run: node --test test/sales-derived-orchestration.test.js
       - name: Construir imagen local sin publicar ni ejecutar en Azure
