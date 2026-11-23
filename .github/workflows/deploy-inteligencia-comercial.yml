@@ -19,29 +19,27 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Promote current staging image to production
+      - name: Checkout public frontend repository
+        uses: actions/checkout@v4
+        with:
+          repository: rodrigoibanezm-cmd/cidef-inteligencia-comercial
+          ref: main
+          path: frontend
+          persist-credentials: false
+
+      - name: Build and push frontend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="cidefprodacr.azurecr.io/cidef-inteligencia-comercial:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          az acr login --name cidefprodacr
+          docker build -f frontend/Dockerfile -t "$IMAGE" frontend
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Update existing frontend Container App
         shell: bash
         run: |
           set -euo pipefail
           az extension add --name containerapp --yes
-          IMAGE=$(az containerapp show \
-            --resource-group rg-cidef-prod \
-            --name cidef-intel-comercial-staging \
-            --query 'properties.template.containers[0].image' -o tsv)
-          [[ "$IMAGE" == cidefprodacr.azurecr.io/cidef-inteligencia-comercial-staging:* || "$IMAGE" == cidefprodacr.azurecr.io/cidef-inteligencia-comercial-staging@sha256:* ]] || {
-            echo "::error::Unexpected staging image: $IMAGE"
-            exit 1
-          }
-          echo "Promoting staging image: $IMAGE" >> "$GITHUB_STEP_SUMMARY"
-          az containerapp update \
-            --resource-group rg-cidef-prod \
-            --name cidef-inteligencia-comercial \
-            --image "$IMAGE" \
-            --set-env-vars PROJECTIONS_ENVIRONMENT=staging \
-            --output none
-          DEPLOYED=$(az containerapp show \
-            --resource-group rg-cidef-prod \
-            --name cidef-inteligencia-comercial \
-            --query 'properties.template.containers[0].image' -o tsv)
-          [[ "$DEPLOYED" == "$IMAGE" ]] || { echo "::error::Production image mismatch"; exit 1; }
-          echo "Production now uses the same image as staging." >> "$GITHUB_STEP_SUMMARY"
+          az containerapp update --resource-group rg-cidef-prod --name cidef-inteligencia-comercial --image "$IMAGE" --set-env-vars PROJECTIONS_ENVIRONMENT=production --output none
