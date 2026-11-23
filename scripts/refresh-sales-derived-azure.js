@@ -6,6 +6,7 @@ import { getAzurePool, closeAzurePool, azureCompatibleSql } from '../lib/azure-p
 import { refreshVehiculoCanonicoV01 } from '../lib/canonical/refresh-vehiculo-canonico-v01.js';
 import { refreshDealerSellout } from '../lib/data-floor/refreshDealerSellout.js';
 import { validDate } from '../src/loaders/sales/source-io.js';
+import { syncVehiculosFromRvm } from '../src/loaders/sales/sync-vehiculos-rvm.js';
 import { publishCurrentDealerSellin } from '../src/loaders/sales/refresh.js';
 import { engineSignature } from '../lib/forum-snapshot/incremental.js';
 
@@ -106,6 +107,19 @@ export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
       source_date date NOT NULL, stage text NOT NULL, input_signature text NOT NULL,
       status text NOT NULL, result jsonb NOT NULL DEFAULT '{}'::jsonb,
       completed_at timestamptz, PRIMARY KEY(source_date,stage,input_signature))`);
+    // RAW-only SALES explicitly skips RVM; synchronize lifecycle before canonical.
+    // Change-only updates avoid invalidating downstream stages on an unchanged retry.
+    const rvmSignature = await fingerprint(client, ['rvm_raw', 'vehiculos_raw']);
+    await runStage(client, cutoff, 'vehiculos_raw_rvm_sync', rvmSignature, async () => {
+      const synced = await syncVehiculosFromRvm((text, values) => sql(client, text, values),
+        { onlyChanged: true });
+      const [dates] = await sql(client, `SELECT
+        (SELECT max(fecha)::text FROM public.rvm_raw) AS latest_rvm_registration,
+        (SELECT max(fecha_ingesta)::text FROM public.rvm_raw) AS latest_rvm_ingestion,
+        (SELECT max(fecha_actualizacion_rvm)::text FROM public.vehiculos_raw)
+          AS latest_vehicle_rvm_sync`);
+      return { ...synced, ...dates };
+    });
     // The canonical processor operates on the entire current RAW state; it cannot replay an old day.
     const canonicalSignature = await fingerprint(client, INPUTS);
     await runStage(client, cutoff, 'vehiculo_canonico', canonicalSignature, async () => {
@@ -136,7 +150,7 @@ export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
     await runStage(client, cutoff, 'forum_ventas_snapshot_v01', forumSignature,
       () => publishForumSnapshot());
     return { status: 'COMPLETED', source_dates: ordered, current_state_date: cutoff,
-      stages: ['vehiculo_canonico','dealer_monthly_sellout_snapshots',
+      stages: ['vehiculos_raw_rvm_sync','vehiculo_canonico','dealer_monthly_sellout_snapshots',
         'dealer_monthly_model_sellin_snapshots','forum_ventas_snapshot_v01'] };
   } finally {
     try { if (locked) await sql(client, 'SELECT pg_advisory_unlock(hashtext($1))', [LOCK]); }
