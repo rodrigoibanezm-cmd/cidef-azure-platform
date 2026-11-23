@@ -7,6 +7,7 @@ import { refreshVehiculoCanonicoV01 } from '../lib/canonical/refresh-vehiculo-ca
 import { refreshDealerSellout } from '../lib/data-floor/refreshDealerSellout.js';
 import { validDate } from '../src/loaders/sales/source-io.js';
 import { publishCurrentDealerSellin } from '../src/loaders/sales/refresh.js';
+import { engineSignature } from '../lib/forum-snapshot/incremental.js';
 
 const LOCK = 'cidef_ventas_raw_neon_azure_sync';
 const INPUTS = ['vehiculos_raw', 'ventas_raw', 'notas_venta_raw',
@@ -126,8 +127,12 @@ export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
       () => publishCurrentDealerSellin(month, cutoff, pool, client));
     // The existing publisher already performs certified P1 reconciliation, per-bundle
     // signatures, selective rebuild and atomic publication. Never duplicate its formulas.
-    const forumSignature = await fingerprint(client, [...FORUM_INPUTS, 'vehiculo_canonico',
-      'dealer_monthly_model_sellin_snapshots']);
+    const optionalFinance = (await sql(client, `SELECT to_regclass('public.finanzas_ventas') AS t`))[0].t
+      ? ['finanzas_ventas','finanzas_cierre_archivos'] : [];
+    const forumDataSignature = await fingerprint(client, [...FORUM_INPUTS, 'vehiculo_canonico',
+      'dealer_monthly_model_sellin_snapshots', ...optionalFinance]);
+    const forumSignature = createHash('sha256').update(forumDataSignature +
+      await engineSignature()).digest('hex');
     await runStage(client, cutoff, 'forum_ventas_snapshot_v01', forumSignature,
       () => publishForumSnapshot());
     return { status: 'COMPLETED', source_dates: ordered, current_state_date: cutoff,
