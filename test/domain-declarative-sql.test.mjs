@@ -63,3 +63,22 @@ test('INVENTORY SQL pushdown retains source coverage and bind parameters',async(
   assert.match(calls[1].sql,/WHERE vigente = true AND/);
   assert.doesNotMatch(calls[1].sql,/FOTON/);
 });
+
+test('INVENTORY declarative observation counts distinct current VIN and refuses history',async()=>{
+  const sourceText=source('lib/data-floor/inventoryCertifier.js');
+  assert.match(sourceText,/resolveInventoryObservation/);
+  const fn=adapter('lib/data-floor/inventoryCertifier.js','resolveInventoryObservation',{
+    dataset:async()=>({q:{filters:{brand:'FOTON'}},base:{length:100,missingStockEntry:2},
+      filtered:[{vin:'A'},{vin:'A'},{vin:'B'}]}),
+    field:(row,key)=>row[key],
+    quality:base=>({source_n:base.length}),
+    createHash:()=>({update(){return this;},digest(){return '123456789abcdef01234567890';}}),
+    CERTIFIER_VERSION:'0.2',DATA_SOURCE:'INVENTORY'
+  });
+  const out=await fn({measure:'VIN_STOCK',filters:{brand:'FOTON'}});
+  assert.equal(out.payload.value,2);
+  assert.equal(out.coverage.source_n,100);
+  assert.equal(out.status,'CERTIFIED');
+  await assert.rejects(fn({measure:'VIN_STOCK',time:{period:'2026-08'}}),
+    /INVENTORY_HISTORICAL_SNAPSHOT_NOT_AVAILABLE/);
+});
