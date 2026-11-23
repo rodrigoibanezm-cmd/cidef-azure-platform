@@ -1,0 +1,27 @@
+name: CI SALES derivadas
+on:
+  push:
+    paths:
+      - 'scripts/refresh-sales-derived-azure.js'
+      - 'Dockerfile.sales-refresh'
+      - '.github/workflows/ci-sales-derived.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verificar sintaxis y ausencia de cargas RAW en el ejecutor
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/refresh-sales-derived-azure.js
+          if grep -Eq 'runSalesRawRefresh|runSalesRefresh|--publish' scripts/refresh-sales-derived-azure.js; then
+            echo "::error::Derivadas no deben cargar RAW ni publicar snapshots"
+            exit 1
+          fi
+      - name: Construir imagen local sin publicar ni ejecutar en Azure
+        run: docker build -f Dockerfile.sales-refresh -t cidef-sales-derived-ci .
