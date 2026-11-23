@@ -1,0 +1,25 @@
+name: Validate domain declarative SQL on Azure (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install existing runtime dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @modelcontextprotocol/sdk@1.26.0 jose@6.1.0 zod@3.25.76 pg@8.16.3
+      - name: Compare actual P1 results in existing Azure PostgreSQL
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: node scripts/validate-domain-declarative-azure.mjs
+# Read only. No deployment, Container App changes, tables, or data writes.
