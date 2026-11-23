@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/semantic-sales-prototype.mjs'
       - 'lib/data-floor/sales/preparation.js'
+      - 'lib/data-floor/sales/dataset.js'
       - 'lib/data-floor/salesCertifier.js'
       - 'lib/data-floor/registry.js'
       - 'test/sales-sql-first-planner.test.js'
@@ -30,6 +31,7 @@ jobs:
         run: |
           node --check scripts/semantic-sales-prototype.mjs
           node --check lib/data-floor/sales/preparation.js
+          node --check lib/data-floor/sales/dataset.js
           node --check lib/data-floor/salesCertifier.js
           node --check lib/data-floor/registry.js
       - name: Isolated planner regression tests
