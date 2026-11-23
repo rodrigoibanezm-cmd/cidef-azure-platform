@@ -4,5 +4,5 @@ COPY package.json ./
 RUN npm install --omit=dev --ignore-scripts
 COPY lib ./lib
 COPY src/loaders/sales ./src/loaders/sales
-COPY scripts/refresh-sales-sources-azure.js ./scripts/
+COPY scripts/refresh-sales-sources-azure.js scripts/refresh-sales-derived-azure.js ./scripts/
 CMD ["node", "scripts/refresh-sales-sources-azure.js"]
