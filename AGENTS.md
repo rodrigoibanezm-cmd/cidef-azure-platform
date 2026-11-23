@@ -113,3 +113,10 @@ SQL-first SALES (2026-11-19): candidatos DEALERS y agrupaciones OWN_STORES está
 - La etapa devuelve `rows_updated`, `latest_rvm_registration`, `latest_rvm_ingestion` y `latest_vehicle_rvm_sync` para distinguir sincronización exitosa de fuente RVM desactualizada. Si el máximo de origen RVM sigue en octubre, una ejecución exitosa NO obtiene por sí sola datos posteriores. `canonicalized_at` es un timestamp distinto y no demuestra vigencia de la fuente.
 - Orden del botón después del cambio: RVM→vehiculos_raw, canónico, sell-out, sell-in, snapshot Forum. Retries reutilizan firmas y no reingestan RAW. El nuevo tag debe publicarse primero en ACR y actualizarse en Data Admin vía su workflow manual. No ejecutar deploy ni botón contra producción por CI; validación real de datos solo tras publicación autorizada.
 - CI focalizado en `.github/workflows/ci-sales-derived.yml`: sintaxis de sincronizador + runner, tests de orden/compatibilidad por SQL simulado y Docker build sin producción. Confirmar CI verde en GitHub Actions antes de publicar. Esta modificación no certifica comparaciones de VIN contra Azure en vivo.
+
+## SQL-first A/B validation — 2026-11-23 (post deploy, diagnostic only)
+- Deployed MCP read-only `sales_sql_first_validate` ran three A/B comparisons against full-source P1. Every case PASS 11/11, same-run scope isolation valid, no missing/extra records.
+- OWN_STORES brand_id=89 model_id=28 store_id=4 Aug 2026: 4 vs 4 VIN; full 26,098 ms vs selective 1,783 ms.
+- OWN_STORES brand_id=89 model_id=28 seller_id=232 Aug 2026: 4 vs 4 VIN; full 27,932 ms vs selective 1,820 ms.
+- DEALERS brand_id=89 model_id=28 grouped DEALER_GROUP Aug 2026: 199 vs 199 VIN; full 30,369 ms vs selective 3,279 ms.
+- All return `DIAGNOSTIC_ONLY`; SQL-first opt-in flag production status not changed here. **This does not yet validate real declarative `data_observe` with SQL-first enabled**. Verify in safe nonproduction controlled environment before activating in production; never label `PARTIAL_SOURCE` as global P1 certification.
