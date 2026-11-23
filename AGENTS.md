@@ -135,3 +135,8 @@ SQL-first SALES (2026-11-19): candidatos DEALERS y agrupaciones OWN_STORES está
 - INVENTORY now also exposes `VIN_STOCK` as a CURRENT-STATE-ONLY declarative quantitative observation. It refuses period/date history, since no historical inventory authority exists.
 - CI (no DB/deploy): `.github/workflows/ci-domain-declarative-sql.yml`, with `test/domain-declarative-sql.test.mjs` checking adapters, invalid requests, inventory SQL bind parameters, complete-universe coverage and distinct current VIN.
 - **Important:** implementation on `main` only, not yet deployed. Mock/isolated tests are not real-data P1 equivalence; validate CI and affected domains with real Azure PostgreSQL via a separate read-only authorized validation before deployment, then require explicit production deployment approval.
+
+## 2026-11-23 — Real-data acceptance gate for domain-wide declarative routing
+- Manual read-only validation in `.github/workflows/validate-domain-declarative-azure.yml` runs `scripts/validate-domain-declarative-azure.mjs` against existing Azure PostgreSQL with Production's read credential.
+- The script dynamically selects a published SELL_OUT snapshot, TARGETS monthly/store reference, PRICING canonical episode, and current INVENTORY VIN, then compares declarative registry evidence against each pre-existing direct certifier (INVENTORY against FETCH distinct VIN), checking P1 authority and rejecting historical inventory requests.
+- The script and Action are **committed but not run**. Do not claim live parity until a successful Action log is inspected. Production motor-test has not been redeployed with domain-wide changes.
