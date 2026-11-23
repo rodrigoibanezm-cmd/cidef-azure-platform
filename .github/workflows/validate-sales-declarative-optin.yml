@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install runtime dependencies
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund zod@3.25.76
       - name: Validate P1 full vs partial declarative evidence
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
