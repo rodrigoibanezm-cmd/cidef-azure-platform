@@ -184,7 +184,7 @@ export async function runSalesRawRefresh({ dates, container, pool, log = () => {
   }
 }
 
-async function publishCurrentDealerSellin(period, cutoff, pool) {
+export async function publishCurrentDealerSellin(period, cutoff, pool, transactionClient = null) {
   const filters = { commercial_universe: 'DEALERS', sales_source: 'SALES',
     date_from: period + '-01', date_to: cutoff };
   const evidence = await observeDataSource('SALES', { measure: 'VIN_SALES', filters });
@@ -207,9 +207,9 @@ async function publishCurrentDealerSellin(period, cutoff, pool) {
     const key = [dealer, brand, model].join('|');
     groups.set(key, (groups.get(key) || 0) + Number(sale.quantity));
   }
-  const client = await pool.connect();
+  const client = transactionClient || await pool.connect();
   try {
-    await client.query('BEGIN');
+    if (!transactionClient) await client.query('BEGIN');
     await client.query('DELETE FROM dealer_monthly_model_sellin_snapshots WHERE period=$1', [period]);
     for (const [key, units] of groups) {
       const [dealer, brand, model] = key.split('|').map(Number);
@@ -218,10 +218,10 @@ async function publishCurrentDealerSellin(period, cutoff, pool) {
         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [period, dealer, brand, model, units, cutoff, evidence.evidence_id]);
     }
-    await client.query('COMMIT');
+    if (!transactionClient) await client.query('COMMIT');
     return { period, status: 'UPDATED', units: evidence.payload.value, rows: groups.size };
-  } catch (error) { await client.query('ROLLBACK'); throw error; }
-  finally { client.release(); }
+  } catch (error) { if (!transactionClient) await client.query('ROLLBACK'); throw error; }
+  finally { if (!transactionClient) client.release(); }
 }
 
 export async function runSalesRefresh({ dates, container, pool, log = () => {},
