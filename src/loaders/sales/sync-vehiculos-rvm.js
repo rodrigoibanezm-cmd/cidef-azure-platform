@@ -39,7 +39,7 @@ export async function preserveVehicleLifecycleInSnapshot(stagingTable, execute =
   `);
 }
 
-export async function syncVehiculosFromRvm(execute = queryDb) {
+export async function syncVehiculosFromRvm(execute = queryDb, { onlyChanged = false } = {}) {
   await ensureVehicleLifecycleColumns(VEHICLES, execute);
 
   const rows = await execute(`
@@ -83,33 +83,44 @@ export async function syncVehiculosFromRvm(execute = queryDb) {
       FROM matched_rvm
       GROUP BY vin
     ),
+    proposed AS (
+      SELECT v.ctid AS vehicle_row,
+        CASE
+          WHEN v.rvm_data_status='CONSOLIDATED' AND a.rvm_data_status='PRELIMINARY'
+            THEN v.fecha_inscripcion_rvm
+          ELSE a.fecha_inscripcion_rvm
+        END AS new_date,
+        CASE
+          WHEN v.rvm_data_status='CONSOLIDATED' AND a.rvm_data_status='PRELIMINARY'
+            THEN v.patente_rvm
+          ELSE coalesce(a.patente_rvm, v.patente_rvm)
+        END AS new_plate,
+        CASE
+          WHEN v.rvm_data_status='CONSOLIDATED' THEN 'CONSOLIDATED'
+          ELSE a.rvm_data_status
+        END AS new_status,
+        v.rvm_data_status='CONSOLIDATED' AND a.rvm_data_status='PRELIMINARY' AS keep_timestamp
+      FROM public.vehiculos_raw v
+      JOIN aggregated a ON upper(btrim(v.vin_chasis)) = a.vin
+    ),
     updated AS (
       UPDATE public.vehiculos_raw v
-         SET fecha_inscripcion_rvm = CASE
-               WHEN v.rvm_data_status='CONSOLIDATED' AND a.rvm_data_status='PRELIMINARY'
-                 THEN v.fecha_inscripcion_rvm
-               ELSE a.fecha_inscripcion_rvm
-             END,
-             patente_rvm = CASE
-               WHEN v.rvm_data_status='CONSOLIDATED' AND a.rvm_data_status='PRELIMINARY'
-                 THEN v.patente_rvm
-               ELSE coalesce(a.patente_rvm, v.patente_rvm)
-             END,
-             rvm_data_status = CASE
-               WHEN v.rvm_data_status='CONSOLIDATED' THEN 'CONSOLIDATED'
-               ELSE a.rvm_data_status
-             END,
+         SET fecha_inscripcion_rvm = p.new_date,
+             patente_rvm = p.new_plate,
+             rvm_data_status = p.new_status,
              fecha_actualizacion_rvm = CASE
-               WHEN v.rvm_data_status='CONSOLIDATED' AND a.rvm_data_status='PRELIMINARY'
-                 THEN v.fecha_actualizacion_rvm
+               WHEN p.keep_timestamp THEN v.fecha_actualizacion_rvm
                ELSE now()
              END
-        FROM aggregated a
-       WHERE upper(btrim(v.vin_chasis)) = a.vin
+        FROM proposed p
+       WHERE v.ctid = p.vehicle_row
+         AND (NOT $1::boolean OR
+              (v.fecha_inscripcion_rvm, v.patente_rvm, v.rvm_data_status)
+              IS DISTINCT FROM (p.new_date, p.new_plate, p.new_status))
        RETURNING 1
     )
     SELECT count(*)::int AS rows_updated FROM updated
-  `);
+  `, [onlyChanged]);
 
   return rows[0] ?? { rows_updated: 0 };
 }
