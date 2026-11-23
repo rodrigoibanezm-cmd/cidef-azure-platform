@@ -160,6 +160,7 @@ jobs:
           az containerapp secret set --resource-group "$RG" --name "$APP" --secrets "database-url=$AZURE_DATABASE_URL" --output none
           az containerapp update --resource-group "$RG" --name "$APP" --image "$IMAGE" --set-env-vars \
             "AZURE_DATABASE_URL=secretref:database-url" \
+            "SALES_SQL_FIRST_ENABLED=true" \
             --remove-env-vars MCP_ENTRA_CLIENT_ID MCP_ENTRA_TENANT_ID MCP_PUBLIC_URL \
             --output none
 
