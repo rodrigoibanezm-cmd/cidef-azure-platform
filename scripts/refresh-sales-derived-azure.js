@@ -37,9 +37,20 @@ async function fingerprint(client, tables) {
   const parts = [];
   for (const table of tables) {
     // Full source content, not timestamps or row counts: changed values invalidate a stage.
-    const [row] = await sql(client, `SELECT md5(coalesce(string_agg(h, '' ORDER BY h), '')) AS digest
-      FROM (SELECT md5(to_jsonb(t)::text) AS h FROM public.${table} t) s`);
-    parts.push([table, row.digest]);
+    emit({ stage: 'fingerprint', table, status: 'RUNNING' });
+    const started = Date.now();
+    // RVM has millions of rows. Avoid a huge sorted string_agg for its fingerprint.
+    // Two order-independent 64-bit checksums plus row count detect content changes.
+    const query = table === 'rvm_raw'
+      ? `SELECT count(*)::text AS n,
+          sum(('x' || substr(h, 1, 16))::bit(64)::bigint)::text AS left_hash,
+          sum(('x' || substr(h, 17, 16))::bit(64)::bigint)::text AS right_hash
+         FROM (SELECT md5(to_jsonb(t)::text) h FROM public.rvm_raw t) s`
+      : `SELECT md5(coalesce(string_agg(h, '' ORDER BY h), '')) AS digest
+         FROM (SELECT md5(to_jsonb(t)::text) AS h FROM public.${table} t) s`;
+    const [row] = await sql(client, query);
+    parts.push([table, row]);
+    emit({ stage: 'fingerprint', table, status: 'COMPLETED', elapsed_ms: Date.now() - started });
   }
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
