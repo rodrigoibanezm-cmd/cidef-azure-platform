@@ -197,13 +197,18 @@ export async function publishCurrentDealerSellin(period, cutoff, pool, transacti
     throw new Error('P1_SALES_NOT_RECONCILED: ' + period);
   }
   const groups = new Map();
+  let unresolvedModels = 0;
   for (const sale of fetched.rows) {
     const dealer = sale.dealer_group_id == null ? 0 : Number(sale.dealer_group_id);
-    const brand = Number(sale.brand_id), model = Number(sale.model_id);
+    // 0 is an explicit unresolved-model bucket, not a fabricated model identity.
+    const brand = Number(sale.brand_id);
+    const model = sale.model_id == null ? 0 : Number(sale.model_id);
     if (String(sale.sale_date).slice(0, 7) !== period || !Number.isSafeInteger(dealer) ||
-        !Number.isSafeInteger(brand) || !Number.isSafeInteger(model) || model <= 0) {
-      throw new Error('MODEL_OR_PERIOD_NOT_RESOLVED: ' + period);
+        !Number.isSafeInteger(brand) || brand <= 0 ||
+        !Number.isSafeInteger(model) || model < 0) {
+      throw new Error('INVALID_SELLIN_DIMENSIONS: ' + period);
     }
+    if (model === 0) unresolvedModels += Number(sale.quantity);
     const key = [dealer, brand, model].join('|');
     groups.set(key, (groups.get(key) || 0) + Number(sale.quantity));
   }
@@ -219,7 +224,8 @@ export async function publishCurrentDealerSellin(period, cutoff, pool, transacti
       [period, dealer, brand, model, units, cutoff, evidence.evidence_id]);
     }
     if (!transactionClient) await client.query('COMMIT');
-    return { period, status: 'UPDATED', units: evidence.payload.value, rows: groups.size };
+    return { period, status: 'UPDATED', units: evidence.payload.value,
+      rows: groups.size, unresolved_model_vin: unresolvedModels };
   } catch (error) { if (!transactionClient) await client.query('ROLLBACK'); throw error; }
   finally { if (!transactionClient) client.release(); }
 }
