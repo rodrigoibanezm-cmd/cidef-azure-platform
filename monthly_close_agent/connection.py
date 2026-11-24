@@ -1,12 +1,9 @@
-"""SDK transport restricted to existing certified MCP tools."""
-
+"""SDK transport restricted to the unified certified MCP surface."""
 from agents.mcp import MCPServerStreamableHttp, create_static_tool_filter
 
 ALLOWED_TOOLS = frozenset({
-    "data_describe", "data_inspect", "data_resolve", "data_observe",
-    "sales_observe_many", "p2_discover", "p2_describe", "p2_execute", "run_trace",
+    "data_query", "p2_discover", "p2_describe", "p2_execute", "run_trace",
 })
-SOURCES = frozenset({"SALES", "FORUM", "RVM", "TARGETS"})
 
 
 class CertifiedMCP(MCPServerStreamableHttp):
@@ -23,9 +20,7 @@ class CertifiedMCP(MCPServerStreamableHttp):
 
     async def call_tool(self, tool_name, arguments, meta=None):
         if tool_name not in ALLOWED_TOOLS:
-            raise ValueError("Tool outside the certified monthly-close scope")
+            raise ValueError("Tool outside unified certified scope")
         args = dict(arguments or {})
-        if "source" in args and args["source"] not in SOURCES:
-            raise ValueError("Source outside the monthly-close scope")
         args["run_id"] = self.run_id
         return await super().call_tool(tool_name, args, meta=meta)

@@ -1,0 +1,25 @@
+name: CI P4 unified motor
+on:
+  push:
+    paths:
+      - 'monthly_close_agent/**'
+      - 'test/test_p4_unified.py'
+      - 'Dockerfile.p4'
+      - '.github/workflows/ci-p4.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r monthly_close_agent/requirements.txt
+      - run: python -m compileall -q monthly_close_agent
+      - run: python -m unittest discover -s test -p test_p4_unified.py
+      - run: pip check
+      - run: docker build -f Dockerfile.p4 -t p4-ci .

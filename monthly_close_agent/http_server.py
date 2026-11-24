@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from .runner import generate
+from .routing import validate_route
 
 MAX_BYTES = 16_384
 
@@ -43,8 +44,13 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, AttributeError, TypeError, json.JSONDecodeError):
             return self.reply(400, {"error": "INVALID_JSON"})
         try:
+            if not validate_route(payload.get("route"), payload.get("research_goal")):
+                return self.reply(200, {"status": "DIRECT_MOTOR"})
+        except ValueError:
+            return self.reply(400, {"error": "INVALID_RESEARCH_ROUTE"})
+        try:
             report = asyncio.run(generate(
-                question, url=os.environ["MCP_URL"],
+                question + "\nObjetivo de investigación: " + payload["research_goal"], url=os.environ["MCP_URL"],
                 model=os.environ["OPENAI_MODEL"],
                 output_dir=os.getenv("P4_OUTPUT_DIR", "monthly-close-reports"),
             ))

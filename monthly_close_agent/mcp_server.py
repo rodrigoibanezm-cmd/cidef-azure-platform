@@ -9,17 +9,25 @@ from starlette.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .runner import generate
+from .routing import validate_route
 
 mcp = FastMCP("cidef-p4", stateless_http=True, json_response=True)
 
 
 @mcp.tool()
-async def commercial_analyze(question: str) -> dict:
-    """Investigate a CIDEF commercial question using certified P1/P2/P3 evidence."""
+async def commercial_analyze(question: str, route: str, research_goal: str) -> dict:
+    """Only for complex investigations requiring adaptive multi-step evidence.
+    Never call for descriptive queries, rankings, or a single existing P1/P2
+    contract; call the motor directly instead. route=P4_RESEARCH requires a
+    research_goal explaining what cannot be resolved by one direct contract.
+    route=DIRECT_MOTOR returns without invoking the SDK.
+    """ 
+    if not validate_route(route, research_goal):
+        return {"status": "DIRECT_MOTOR", "message": "Use data_query or existing P2 directly."}
     if not isinstance(question, str) or not 0 < len(question.strip()) <= 8000:
         raise ValueError("INVALID_QUESTION")
     report = await generate(
-        question,
+        question + "\nObjetivo de investigación: " + research_goal,
         url=os.environ["MCP_URL"],
         model=os.environ["OPENAI_MODEL"],
         output_dir=os.getenv("P4_OUTPUT_DIR", "/tmp/p4-reports"),

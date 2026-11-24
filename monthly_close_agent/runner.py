@@ -9,6 +9,7 @@ from uuid import uuid4
 from agents import Agent, ModelSettings, RunConfig, Runner
 
 from .connection import CertifiedMCP
+from .evidence import evidence_status
 
 
 async def generate(question, *, url, model, output_dir, max_turns=40):
@@ -39,19 +40,13 @@ async def generate(question, *, url, model, output_dir, max_turns=40):
         if (payload.get("run") or {}).get("run_id") != run_id:
             raise RuntimeError("P3 no confirmó la identidad de esta ejecución")
         events = payload.get("events", [])
-        has_evidence = any(
-            e.get("floor") == "P1" and e.get("status") == "SUCCESS"
-            and e.get("tool_name") == "data_observe"
-            and (e.get("output_json") or {}).get("authority") == "P1_CERTIFIED"
-            and (e.get("output_json") or {}).get("evidence_id")
-            for e in events
-        )
+        status = evidence_status(events)
         destination.mkdir(parents=True, exist_ok=False)
         (destination / "trace.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8",
         )
-        if not has_evidence:
-            raise RuntimeError(f"Sin evidencia P1 certificada. Traza: {destination / 'trace.json'}")
+        if status == "NO_EVIDENCE":
+            raise RuntimeError(f"Sin evidencia P1 reconocida. Traza: {destination / 'trace.json'}")
         if not isinstance(result.final_output, str) or not result.final_output.strip():
             raise RuntimeError("El agente no devolvió Markdown; se conservó la traza")
         header = (
@@ -59,6 +54,7 @@ async def generate(question, *, url, model, output_dir, max_turns=40):
             f"Borrador ejecutivo generado por IA; requiere revisión.\n\n"
             f"- Ejecución: `{run_id}`\n- Modelo: `{model}`\n"
             f"- Generado UTC: {datetime.now(timezone.utc).isoformat()}\n"
+            f"- Autoridad observada: `{status}` (no certifica el informe completo)\n"
             f"- Evidencia: [trace.json](trace.json)\n\n"
         )
         report = destination / "report.md"
