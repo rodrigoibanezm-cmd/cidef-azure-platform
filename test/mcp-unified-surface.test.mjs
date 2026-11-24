@@ -34,7 +34,12 @@ test('unified surface keeps one factual tool, P2 and the run trace', async () =>
   for (const source of listDataSources()) {
     assert.ok(query.description.includes(source + ' — measures:'), source);
   }
-  assert.deepEqual(query.inputSchema.required.sort(), ['run_id','source','request'].sort());
+  assert.deepEqual(query.inputSchema.required, ['run_id']);
+  const actions=query.inputSchema.properties.action.enum;
+  for(const name of ['data_observe','data_fetch','data_resolve','data_describe',
+    'data_inspect','sales_observe_many','sales_observe_windows']) {
+    assert.ok(actions.includes(name), name);
+  }
 });
 
 test('legacy compatibility restores existing MCP tool surface', async () => {
