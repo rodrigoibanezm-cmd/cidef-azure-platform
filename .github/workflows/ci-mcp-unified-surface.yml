@@ -29,6 +29,8 @@ jobs:
         run: |
           node --check lib/mcp/server.js
           node --test test/data-query-entrypoint.test.mjs test/mcp-unified-surface.test.mjs
-      - name: Critical dependency vulnerabilities
-        run: npm audit --omit=dev --audit-level=critical
+      - name: Critical runtime dependency vulnerabilities
+        run: |
+          npm --prefix motor-test-azure install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm --prefix motor-test-azure audit --omit=dev --audit-level=critical
 # No Azure credentials, deployment, production queries or writes.
