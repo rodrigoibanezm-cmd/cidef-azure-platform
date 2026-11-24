@@ -39,16 +39,23 @@ async function fingerprint(client, tables) {
     // Full source content, not timestamps or row counts: changed values invalidate a stage.
     emit({ stage: 'fingerprint', table, status: 'RUNNING' });
     const started = Date.now();
-    // RVM has millions of rows. Avoid a huge sorted string_agg for its fingerprint.
-    // Two order-independent 64-bit checksums plus row count detect content changes.
+    // Fingerprint the massive RVM source from PostgreSQL mutation metadata,
+    // not a full scan/hash of millions of rows (previously timed out at 120s).
+    // Physical relfilenode identifies rewrites; mutation counters detect inserts,
+    // updates, deletes and truncation between executions.
     const query = table === 'rvm_raw'
-      ? `SELECT count(*)::text AS n,
-          sum(('x' || substr(h, 1, 16))::bit(64)::bigint)::text AS left_hash,
-          sum(('x' || substr(h, 17, 16))::bit(64)::bigint)::text AS right_hash
-         FROM (SELECT md5(to_jsonb(t)::text) h FROM public.rvm_raw t) s`
+      ? `SELECT c.relfilenode::text AS storage_id,
+          s.n_tup_ins::text AS inserted, s.n_tup_upd::text AS updated,
+          s.n_tup_del::text AS deleted, s.n_tup_hot_upd::text AS hot_updated,
+          s.n_live_tup::text AS live_estimate
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         LEFT JOIN pg_stat_all_tables s ON s.relid = c.oid
+         WHERE n.nspname = 'public' AND c.relname = 'rvm_raw'`
       : `SELECT md5(coalesce(string_agg(h, '' ORDER BY h), '')) AS digest
          FROM (SELECT md5(to_jsonb(t)::text) AS h FROM public.${table} t) s`;
     const [row] = await sql(client, query);
+    if (table === 'rvm_raw' && !row) throw new Error('RVM source metadata unavailable');
     parts.push([table, row]);
     emit({ stage: 'fingerprint', table, status: 'COMPLETED', elapsed_ms: Date.now() - started });
   }
