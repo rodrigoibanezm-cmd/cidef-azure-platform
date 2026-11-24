@@ -33,7 +33,7 @@ test('every P1-accepted monthly date is included in SQL candidate date predicate
 
 test('candidate SQL cannot push down identities resolved only after P1 recognition',()=>{
   const source=readFileSync(new URL('../scripts/semantic-sales-prototype.mjs',import.meta.url),'utf8');
-  const conditions=source.slice(source.indexOf('  const conditions=['),source.indexOf("  const sql='SELECT DISTINCT"));
+  const conditions=source.slice(source.indexOf('export function buildSalesCandidateVinSql('),source.indexOf('export async function semanticSalesCandidates('));
   assert.doesNotMatch(conditions,/productPredicate|store_id|dealer_id|seller_id|marca_id|modelo_id/);
   assert.match(conditions,/categoria_cliente/);
   assert.match(conditions,/fecha_factura/);
