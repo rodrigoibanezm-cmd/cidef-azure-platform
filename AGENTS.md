@@ -16,6 +16,14 @@
 - Mantener AGENTS.md y la documentación de handoff actualizados para continuar en otro chat. Entregar resultados, faltantes y evidencia, sin solicitar autorización por archivo/commit/prueba.
 - Priorizar cambios pequeños y verificables, pruebas proporcionadas al riesgo y commits claros. El límite anterior de dos archivos y ejecución separada de cada microcambio no restringe un objetivo completo expresamente autorizado; el despliegue permanece separado.
 
+## MCP unificado — 2026-11-24 (implementado en main; no desplegado)
+- Objetivo autorizado: una única entrada factual visible, `data_query`, reutilizando `data_observe` + registry P1, con SQL-first selectivo y certificación intactos. No construir un segundo motor SQL ni reglas por dominio.
+- En `lib/mcp/server.js`, registro SDK mantiene ejecutores existentes; con `CIDEF_MCP_TOOL_SURFACE` distinto de `legacy` se deshabilita la exposición externa de herramientas internas mediante la API SDK `registered.disable()`, sin eliminar handlers. Las herramientas visibles son `data_query`, `p2_discover`, `p2_describe`, `p2_execute`, `run_trace`. Los endpoints de diagnóstico registrados después en `motor-test-azure/server.js` también quedan ocultos.
+- Contratos/métricas/filtros del texto de `data_query` se generan desde `describeDataSource`, no mediante listas de dominios hardcodeadas. El modelo indica medida/tiempo/filtros; el backend P1 decide ejecución y conserva `P1_PARTIAL_SOURCE` cuando procede. P2 sigue siendo público para transformaciones certificadas.
+- Compatibilidad/rollback: `CIDEF_MCP_TOOL_SURFACE=legacy` vuelve a mostrar herramientas existentes sin alterar el motor. El flujo de investigación interno conserva sus callbacks, aunque `research` no aparece públicamente en modo unificado.
+- Validación mínima: `test/mcp-unified-surface.test.mjs` inspecciona `tools/list` REAL del SDK en memoria (unificado y legacy), `test/data-query-entrypoint.test.mjs` comprueba la delegación; `.github/workflows/ci-mcp-unified-surface.yml` ejecuta sintaxis, ambos tests y auditoría crítica de dependencias, SIN conexión a Azure ni deploy.
+- **No inferir producción actualizada por commit**. No hacer deploy automático. Después del CI se requiere autorización específica de despliegue, y solo entonces probar `tools/list` y la latencia/certificación del MCP remoto.
+
 Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related tasks before each task.
 
 **P1 SALES SQL-first (handoff 2026-11-18):** read `docs/SALES-SQL-FIRST-HANDOFF.md` BEFORE continuing SALES latency work. SQL-first selective run integration is on `main`, **default OFF** (`SALES_SQL_FIRST_ENABLED` must be `true` to opt in). Do not enable or deploy without explicit authorization and live certification; partial global source coverage is unresolved. Reuse only within one run; never cross-run. Read alongside the historical motor latency log.
