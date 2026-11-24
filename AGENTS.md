@@ -24,6 +24,14 @@
 - Validación mínima: `test/mcp-unified-surface.test.mjs` inspecciona `tools/list` REAL del SDK en memoria (unificado y legacy) y comprueba que acceso individual/resolución/batches persisten como acciones; `test/data-query-entrypoint.test.mjs` comprueba la delegación a los contratos originales. `.github/workflows/ci-mcp-unified-surface.yml` ejecuta sintaxis, ambos tests y auditoría crítica de dependencias, SIN conexión a Azure ni deploy. CI `45401083433` PASS (3/3 tests; 0 vulnerabilidades críticas; npm audit informa 2 altas y 1 moderada en dependencias).
 - **No inferir producción actualizada por commit**. No hacer deploy automático. Después del CI se requiere autorización específica de despliegue, y solo entonces probar `tools/list` y la latencia/certificación del MCP remoto.
 
+## SALES SQL-first: validación de paridad VIN por VIN — 2026-11-24
+- Validación **read-only** contra Azure PostgreSQL mediante `scripts/validate-sales-declarative-optin.mjs` y workflow `.github/workflows/validate-sales-declarative-optin.yml`. No desplegar ni escribir datos; `SALES_SQL_FIRST_ENABLED=false` fuera de los llamados diagnósticos explícitos.
+- Resultado real GitHub Actions run **45404975032**, job **138483074156**: **PASS 60/60**, **0 diferencias** entre fact sets completos P1 y SQL-first en registros VIN, `source_id` y atributos `FIELDS` (incluidos marca/modelo/versión/fecha/sucursal/dealer/vendedor).
+- Cobertura de muestra derivada de los propios hechos P1, no IDs fijos: períodos 2026-08 y 2026-10, universos OWN_STORES/DEALERS, modelos comunes y raros; filtros marca/modelo, opcional store_id/dealer_id y seller_id. Se probaron 4 combinaciones de mes × canal y 60 scopes.
+- Esto **prueba paridad en las 60 muestras**, NO exhaustividad matemática universal ni cobertura de otros meses, nuevos datos, filtros no soportados o variaciones futuras. Mantener autoridad `P1_PARTIAL_SOURCE` para selección SQL-first hasta aprobar un contrato explícito de exhaustividad/certificación. No elevarlo automáticamente a `P1_CERTIFIED`.
+- Evidencia de respuesta rápida previa mediante MCP: 4, 7, 199 VIN (SALES SQL-first) iguales a P1 completo para Pajaritos, Antofagasta y Dealers en agosto de 2026; validación de registros ampliada superó la comparación solo de totales.
+- Commits del gate: `d815cad` (script genérico) y `5780755` (workflow read-only), sin deploy.
+
 Read `docs/PROJECT-CONTEXT.md` and `docs/COMO-VAMOS-SNAPSHOTS.md` for related tasks before each task.
 
 **P1 SALES SQL-first (handoff 2026-11-18):** read `docs/SALES-SQL-FIRST-HANDOFF.md` BEFORE continuing SALES latency work. SQL-first selective run integration is on `main`, **default OFF** (`SALES_SQL_FIRST_ENABLED` must be `true` to opt in). Do not enable or deploy without explicit authorization and live certification; partial global source coverage is unresolved. Reuse only within one run; never cross-run. Read alongside the historical motor latency log.
