@@ -1,0 +1,56 @@
+name: Inspect or adjust derived Azure Job timeout
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Audit is read-only; apply explicitly updates the existing Job timeout
+        type: choice
+        required: true
+        default: audit
+        options:
+          - audit
+          - apply
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  timeout:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 10
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Inspect job and optionally extend timeout
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          RG=rg-cidef-prod
+          JOB=cidef-data-loader-job
+          TARGET=3600
+          CURRENT=$(az containerapp job show -g "$RG" -n "$JOB" --query 'properties.configuration.replicaTimeout' -o tsv)
+          TRIGGER=$(az containerapp job show -g "$RG" -n "$JOB" --query 'properties.configuration.triggerType' -o tsv)
+          test "$TRIGGER" = Manual || { echo 'Unexpected job trigger; stopping'; exit 1; }
+          [[ "$CURRENT" =~ ^[0-9]+$ ]] || { echo 'Unable to verify existing replica timeout'; exit 1; }
+          echo "Existing Job replica timeout: $CURRENT seconds"
+          if [[ "$MODE" == audit ]]; then
+            echo 'Audit only: Azure unchanged'
+            exit 0
+          fi
+          test "$MODE" = apply || { echo 'Unknown mode'; exit 1; }
+          if (( CURRENT >= TARGET )); then
+            echo "Existing timeout is already at least $TARGET; no changes"
+            exit 0
+          fi
+          az containerapp job update -g "$RG" -n "$JOB" --replica-timeout "$TARGET" --output none
+          UPDATED=$(az containerapp job show -g "$RG" -n "$JOB" --query 'properties.configuration.replicaTimeout' -o tsv)
+          test "$UPDATED" = "$TARGET" || { echo "Failed to verify timeout: $UPDATED"; exit 1; }
+          echo "Updated Job replica timeout: $UPDATED seconds. No job execution started."
