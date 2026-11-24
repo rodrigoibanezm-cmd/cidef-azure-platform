@@ -1,0 +1,36 @@
+name: Validate P4 research end to end
+on:
+  workflow_dispatch:
+    inputs:
+      period:
+        description: Closed commercial month (YYYY-MM)
+        required: true
+        type: string
+      model:
+        description: OpenAI API model (blank uses OPENAI_MODEL variable)
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ inputs.model || vars.OPENAI_MODEL }}
+      MCP_URL: ${{ vars.MCP_URL }}
+      PERIOD: ${{ inputs.period }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check configuration without printing secrets
+        run: |
+          test -n "$OPENAI_API_KEY" || { echo "::error::Missing OPENAI_API_KEY repository secret"; exit 1; }
+          test -n "$OPENAI_MODEL" || { echo "::error::Supply model or configure OPENAI_MODEL"; exit 1; }
+          test -n "$MCP_URL" || { echo "::error::Configure MCP_URL repository variable"; exit 1; }
+      - run: pip install -r monthly_close_agent/requirements.txt
+      - name: Run bounded commercial investigation
+        run: python -m monthly_close_agent.validate_research
