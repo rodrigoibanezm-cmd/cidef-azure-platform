@@ -1,7 +1,6 @@
 """Read existing P4 configuration, run the candidate locally, never change Azure."""
 import json
 import os
-import re
 import subprocess
 import sys
 
@@ -44,11 +43,11 @@ def main():
             escaped = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
             print("::add-mask::" + escaped, flush=True)
         env[name] = value
-    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", env["PERIOD"]):
-        raise RuntimeError("INVALID_PERIOD")
     subprocess.run([sys.executable, "-m", "monthly_close_agent.probe_mcp"], env=env, check=True)
     if env.get("MCP_ONLY") == "true":
         return
+    if not env.get("QUESTION", "").strip() or not env.get("RESEARCH_GOAL", "").strip():
+        raise RuntimeError("QUESTION_AND_RESEARCH_GOAL_REQUIRED")
     # Do not send credentials to logs, artifacts, or shell command arguments.
     subprocess.run([sys.executable, "-m", "monthly_close_agent.validate_research"],
                    env=env, check=True)

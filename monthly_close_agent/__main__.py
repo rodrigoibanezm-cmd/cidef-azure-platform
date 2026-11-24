@@ -1,24 +1,17 @@
-"""Usage: python -m monthly_close_agent "¿Cómo va Pajaritos?"."""
+"""Usage: python -m monthly_close_agent "Pregunta comercial compleja"."""
 
 import argparse
 import asyncio
 import os
-import re
 import sys
 from urllib.parse import urlsplit
-
-
-def period_value(value):
-    if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", value) or value.startswith("0000"):
-        raise argparse.ArgumentTypeError("El período debe ser YYYY-MM")
-    return value
 
 
 def main():
     parser = argparse.ArgumentParser(description="Orquestador comercial P4 sobre P1/P2/P3")
     parser.add_argument("question", nargs="+", help="Pregunta comercial libre")
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL"))
-    parser.add_argument("--output-dir", default="monthly-close-reports")
+    parser.add_argument("--output-dir", default="p4-reports")
     parser.add_argument("--max-turns", type=int, default=40)
     args = parser.parse_args()
     missing = [name for name in ("OPENAI_API_KEY", "MCP_URL") if not os.getenv(name)]

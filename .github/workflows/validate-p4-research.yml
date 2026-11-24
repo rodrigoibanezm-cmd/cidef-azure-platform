@@ -6,9 +6,13 @@ on:
         description: Diagnose MCP only (no OpenAI API usage)
         type: boolean
         default: true
-      period:
-        description: Closed commercial month (YYYY-MM)
-        required: true
+      question:
+        description: Any complex commercial question (only for full research)
+        required: false
+        type: string
+      research_goal:
+        description: Why adaptive investigation is needed (only for full research)
+        required: false
         type: string
       model:
         description: Optional override (blank uses existing Azure model)
@@ -24,7 +28,8 @@ jobs:
     timeout-minutes: 20
     env:
       MCP_ONLY: ${{ inputs.mcp_only }}
-      PERIOD: ${{ inputs.period }}
+      QUESTION: ${{ inputs.question }}
+      RESEARCH_GOAL: ${{ inputs.research_goal }}
       MODEL_OVERRIDE: ${{ inputs.model }}
     steps:
       - uses: actions/checkout@v4

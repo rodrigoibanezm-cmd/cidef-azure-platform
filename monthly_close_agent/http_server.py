@@ -52,7 +52,7 @@ class Handler(BaseHTTPRequestHandler):
             report = asyncio.run(generate(
                 question + "\nObjetivo de investigación: " + payload["research_goal"], url=os.environ["MCP_URL"],
                 model=os.environ["OPENAI_MODEL"],
-                output_dir=os.getenv("P4_OUTPUT_DIR", "monthly-close-reports"),
+                output_dir=os.getenv("P4_OUTPUT_DIR", "p4-reports"),
             ))
             return self.reply(200, {
                 "run_id": report.parent.name,
