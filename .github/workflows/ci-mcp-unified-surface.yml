@@ -1,0 +1,34 @@
+name: CI unified MCP surface
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/mcp/server.js'
+      - 'lib/data-floor/registry.js'
+      - 'test/mcp-unified-surface.test.mjs'
+      - 'test/data-query-entrypoint.test.mjs'
+      - '.github/workflows/ci-mcp-unified-surface.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install runtime and test dependencies
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @modelcontextprotocol/sdk@1.26.0 zod@3.25.76 pg@8.16.3 jose@6.1.0
+      - name: Syntax and MCP tool-list tests
+        run: |
+          node --check lib/mcp/server.js
+          node --test test/data-query-entrypoint.test.mjs test/mcp-unified-surface.test.mjs
+      - name: Critical dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=critical
+# No Azure credentials, deployment, production queries or writes.
