@@ -5,6 +5,14 @@ on:
     branches: [main]
     paths:
       - 'scripts/validate-sales-declarative-optin.mjs'
+      - 'scripts/semantic-sales-prototype.mjs'
+      - 'lib/ventas/loadVentasRows.js'
+      - 'lib/product-model-resolution/loadSkuEvidence.js'
+      - 'lib/ventas/parseFechaFactura.js'
+      - 'lib/ventas/resolveVentasRecognition.js'
+      - 'lib/ventas-commercial/buildVentasCommercialContext.js'
+      - 'lib/data-floor/sales/recognition.js'
+      - 'test/sales-sql-first-exhaustiveness.test.mjs'
       - '.github/workflows/validate-sales-declarative-optin.yml'
   workflow_dispatch:
 
@@ -23,6 +31,8 @@ jobs:
           node-version: '22'
       - name: Install runtime dependencies
         run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund zod@3.25.76
+      - name: SQL-first completeness invariants
+        run: node --test test/sales-sql-first-exhaustiveness.test.mjs
       - name: Compare P1 complete vs SQL-first VIN-by-VIN
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
