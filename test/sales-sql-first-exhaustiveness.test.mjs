@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseFechaFactura } from '../lib/ventas/parseFechaFactura.js';
 import { monthCandidateDatePattern, planSalesCandidates } from '../scripts/semantic-sales-prototype.mjs';
+import { createSalesFactSet } from '../lib/data-floor/sales/factSet.js';
+import { observeSalesSelection } from '../lib/data-floor/sales/operations.js';
 
 test('every P1-accepted monthly date is included in SQL candidate date predicate',()=>{
   for(let year=2024;year<=2026;year++)for(let month=1;month<=12;month++){
@@ -59,4 +61,30 @@ test('candidate VINs and sales source rows come from one PostgreSQL snapshot',()
   const planner=readFileSync(new URL('../scripts/semantic-sales-prototype.mjs',import.meta.url),'utf8');
   assert.match(planner,/export function buildSalesCandidateVinSql/);
   assert.match(planner,/const \{sql,params\}=buildSalesCandidateVinSql\(plan\)/);
+});
+
+test('scope-certified evidence is P1-certified but never claims full-source coverage',()=>{
+  const filters={commercial_universe:'OWN_STORES',date_from:'2026-08-01',
+    date_to:'2026-08-31',brand_id:89,model_id:28,store_id:4};
+  const fixture={
+    commercial_universe:'OWN_STORES',cutoff_date:'2026-08-31',
+    effective_cutoff_date:'2026-08-31',network:()=> 'TIENDA_PROPIA',
+    base:[{source_id:1,vin:'VIN',fecha_venta_iso:'2026-08-10T00:00:00.000Z',
+      marca_id:89,modelo_id:28,certified_store_id:4}],
+    u:{lineage:{},coverage:{},validation:{valid:true},
+      resolution_resources:{model_catalog:[]}},
+  };
+  const preparation={preparation_id:'test',content_fingerprint:'test'};
+  const partial=createSalesFactSet(fixture,preparation,filters);
+  const scoped=createSalesFactSet(fixture,preparation,filters,true);
+  const p=observeSalesSelection(partial.select(filters));
+  const c=observeSalesSelection(scoped.select(filters));
+  assert.equal(p.authority,'P1_PARTIAL_SOURCE');
+  assert.equal(p.status,'PARTIAL_SOURCE');
+  assert.equal(c.authority,'P1_CERTIFIED');
+  assert.equal(c.status,'CERTIFIED');
+  assert.equal(c.coverage.source_scope,'SCOPED_CERTIFIED');
+  assert.equal(c.lineage.scope_certification,'SQL_FIRST_MONTHLY_SOURCE_SUPERSET_V1');
+  assert.equal(c.payload.value,p.payload.value);
+  assert.throws(()=>scoped.select({...filters,store_id:5}),/SALES_PARTIAL_SOURCE_FILTER_MISMATCH/);
 });
