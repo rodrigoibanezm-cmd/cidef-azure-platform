@@ -2,53 +2,12 @@
 import { queryDb } from '../lib/neon.js';
 import { FILTERS } from '../lib/data-floor/sales/contract.js';
 
-// A filter is pushed down only when its candidate predicate is known to be
-// a safe superset of the certified recognized rows for this monthly scope.
-const predicates = Object.freeze({
-  store_id: (value, bind) => `(EXISTS (
-    SELECT 1 FROM sucursales_master s WHERE s.sucursal_id = ${bind(value)}
-      AND btrim(s.id_sucursal_vta::text) = btrim(v.id_sucursal_vta::text)
-  ) OR EXISTS (
-    SELECT 1 FROM vehiculo_canonico vc
-    WHERE vc.vin = v.nro_vin_chasis AND vc.sucursal_venta_id = ${bind(value)}
-  ))`,
-  dealer_id: (value, bind) => `(EXISTS (
-    SELECT 1 FROM dealers_master d WHERE d.dealer_id = ${bind(value)}
-      AND d.rut_normalizado IS NOT NULL
-      AND regexp_replace(v.cliente, '[^0-9]', '', 'g') =
-          regexp_replace(d.rut_normalizado, '[^0-9]', '', 'g')
-  ) OR EXISTS (
-    SELECT 1 FROM vehiculo_canonico vc
-    WHERE vc.vin = v.nro_vin_chasis AND vc.dealer_id = ${bind(value)}
-  ))`,
-  seller_id: (value, bind) => `EXISTS (
-    SELECT 1 FROM personas_master pm
-    WHERE pm.persona_id = ${bind(value)}
-      AND pm.usuario_canonico::text = v.nombre_usuario::text
-      AND (SELECT COUNT(*) FROM personas_master px
-           WHERE px.usuario_canonico::text = pm.usuario_canonico::text) = 1
-  )`,
-});
-
-// Brand/model is one dependent identity predicate (aliases plus canonical).
-const productPredicate = (model, brand, bind) => `(EXISTS (
-  SELECT 1 FROM producto_aliases_v01 a
-  JOIN modelos_master_v01 m ON m.modelo_id = a.modelo_id
-  WHERE a.estado = 'RESUELTO' AND a.modelo_id = ${bind(model)}
-    AND m.marca_id = ${bind(brand)}
-    AND lower(a.fuente) LIKE 'ventas_raw%'
-    AND a.nivel IN ('MODELO','VERSION')
-    AND master_norm(v.articulo) = master_norm(a.valor_normalizado)
-) OR EXISTS (
-  SELECT 1 FROM vehiculo_canonico vc
-  JOIN versiones_master_v01 ver ON ver.version_id = vc.version_id
-  JOIN modelos_master_v01 m ON m.modelo_id = ver.modelo_id
-  WHERE vc.vin = v.nro_vin_chasis
-    AND m.modelo_id = ${bind(model)} AND m.marca_id = ${bind(brand)}
-))`;
-
+// SQL candidate selection must be a necessary-condition superset of P1 recognition.
+// Certified candidate superset: only predicates necessary for a recognized
+// monthly sale may run before P1. Product, seller, dealer and store identities
+// are resolved later by P1 and must never eliminate candidate VINs here.
 const supported = new Set(['commercial_universe','date_from','date_to',
-  'brand_id','model_id',...Object.keys(predicates)]);
+  'brand_id','model_id','store_id','dealer_id','seller_id']);
 const positiveId = value => Number.isSafeInteger(value) && value > 0;
 
 // This compiler is independent of any MCP tool, group_by, and aggregation.
@@ -64,7 +23,7 @@ export function planSalesCandidates(filters, cutoffDate) {
       from.slice(0,7) !== to.slice(0,7) || to !== cutoffDate ||
       (universe==='DEALERS' && rest.store_id != null) ||
       (universe!=='DEALERS' && rest.dealer_id != null) ||
-      Object.entries(rest).some(([key,value]) => !predicates[key] || !positiveId(value)))
+      Object.entries(rest).some(([key,value]) => !supported.has(key) || !positiveId(value)))
     return null;
   return Object.freeze({filters:{...filters},year:Number(from.slice(0,4)),
     month:Number(from.slice(5,7)),commercial_universe:universe});
@@ -89,15 +48,15 @@ export async function semanticSalesCandidates(input) {
   const params=[];
   const bind=value => {params.push(value);return '$'+params.length;};
   const mm=String(month).padStart(2,'0'), yy=String(year).slice(-2);
-  const datePattern='^('+year+'-'+mm+'-[0-9]{2}|[0-9]{1,2}/0?'+month+
-    '/'+year+'|[0-9]{1,2}/0?'+month+'/'+yy+')([[:space:]]|$)';
+  // parseFechaFactura recognizes YYYY-MM-DD and MM/DD/YYYY or MM/DD/YY.
+  // This regex is a superset (it need not reject invalid days).
+  const datePattern='^('+year+'-'+mm+'-[0-9]{2}|0?'+month+
+    '/[0-9]{1,2}/'+year+'|0?'+month+'/[0-9]{1,2}/'+yy+
+    ')([[:space:]]|$)';
   const conditions=[
     'btrim(v.categoria_cliente) = '+bind(universe==='DEALERS'?'Concesionaria':'Cliente General'),
     "nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL",
     'btrim(v.fecha_factura) ~ '+bind(datePattern),
-    productPredicate(filters.model_id,filters.brand_id,bind),
-    ...Object.entries(predicates).filter(([key])=>filters[key]!=null)
-      .map(([key,compile])=>compile(filters[key],bind)),
   ];
   const sql='SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin FROM ventas_raw v WHERE '+
     conditions.join(' AND ')+' ORDER BY vin';
