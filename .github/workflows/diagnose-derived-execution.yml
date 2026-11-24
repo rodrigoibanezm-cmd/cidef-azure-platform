@@ -1,0 +1,41 @@
+name: Diagnose failed derived execution (read-only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 10
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Inspect failed replica and system events
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG=rg-cidef-prod
+          JOB=cidef-data-loader-job
+          EXEC=cidef-data-loader-job-eoxj4bp
+          ID=$(az containerapp job show -g "$RG" -n "$JOB" --query id -o tsv)
+          echo '=== Execution status and replica details ==='
+          az rest --method GET --url "https://management.azure.com${ID}/executions/${EXEC}?api-version=2025-07-01" \
+            --query '{name:name,properties:properties}' --output json
+          echo '=== Job timeout and resources ==='
+          az containerapp job show -g "$RG" -n "$JOB" \
+            --query '{timeout:properties.configuration.replicaTimeout,retry:properties.configuration.replicaRetryLimit,containers:properties.template.containers[].{name:name,resources:resources}}' -o json
+          echo '=== Azure system logs (best effort; no writes) ==='
+          ENV_ID=$(az containerapp job show -g "$RG" -n "$JOB" --query 'properties.environmentId' -o tsv)
+          WORKSPACE=$(az rest --method GET --url "https://management.azure.com${ENV_ID}?api-version=2024-03-01" --query 'properties.appLogsConfiguration.logAnalyticsConfiguration.customerId' -o tsv)
+          if [[ "$WORKSPACE" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+            QUERY="union isfuzzy=true ContainerAppSystemLogs_CL, ContainerAppSystemLogs | extend Pod=tostring(column_ifexists('ContainerGroupName_s',column_ifexists('ContainerGroupName',''))), Msg=tostring(column_ifexists('Log_s',column_ifexists('Log',''))) | where TimeGenerated between(datetime(2026-11-24T13:00:00Z)..datetime(2026-11-24T13:35:00Z)) | where Pod contains 'eoxj4bp' or Msg contains 'eoxj4bp' | project TimeGenerated,Pod,Msg | order by TimeGenerated asc | take 100"
+            az monitor log-analytics query --workspace "$WORKSPACE" --analytics-query "$QUERY" --output json || echo 'System logs unavailable: inspect execution status above'
+          else
+            echo 'No Log Analytics workspace identifier; execution status above remains authoritative'
+          fi
+          echo 'Read-only diagnosis complete'
