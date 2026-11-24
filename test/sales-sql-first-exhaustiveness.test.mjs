@@ -49,3 +49,14 @@ test('VIN candidate readers retain every non-VIN sale and related SKU evidence',
   assert.ok(sales.includes("OR nullif(btrim(nro_vin_chasis),'') IS NULL"));
   assert.ok(sku.includes("OR nullif(btrim(nro_vin_chasis),'') IS NULL"));
 });
+
+test('candidate VINs and sales source rows come from one PostgreSQL snapshot',()=>{
+  const code=readFileSync(new URL('../lib/data-floor/sales/preparation.js',import.meta.url),'utf8');
+  assert.match(code,/WITH candidate_vins AS MATERIALIZED/);
+  assert.match(code,/VENTAS_CONTEXT_SELECT/);
+  assert.match(code,/sourceRows=await queryDb/);
+  assert.match(code,/sourceRows,\s*timings:diagnostic_timings/);
+  const planner=readFileSync(new URL('../scripts/semantic-sales-prototype.mjs',import.meta.url),'utf8');
+  assert.match(planner,/export function buildSalesCandidateVinSql/);
+  assert.match(planner,/const \{sql,params\}=buildSalesCandidateVinSql\(plan\)/);
+});
