@@ -1,0 +1,53 @@
+name: Deploy Seguimiento Cierre to Azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Commit or branch of cidef-seguimiento-cierre
+        required: true
+        default: '6bcc09b996af0cd8b24db811c8128778cd671233'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-seguimiento-cierre
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 30
+    steps:
+      - name: Check access to private source repository
+        env:
+          SOURCE_TOKEN: ${{ secrets.CIDEF_SOURCE_REPO_TOKEN }}
+        run: |
+          test -n "$SOURCE_TOKEN" || {
+            echo '::error::Set CIDEF_SOURCE_REPO_TOKEN with Contents read access to the private cidef-seguimiento-cierre repository.'
+            exit 1
+          }
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Checkout private application source
+        uses: actions/checkout@v4
+        with:
+          repository: rodrigoibanezm-cmd/cidef-seguimiento-cierre
+          ref: ${{ inputs.source_ref }}
+          token: ${{ secrets.CIDEF_SOURCE_REPO_TOKEN }}
+          path: frontend
+          persist-credentials: false
+      - name: Login with existing Azure deployment identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Build, provision target app and verify without business writes
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: bash scripts/deploy-seguimiento-cierre.sh

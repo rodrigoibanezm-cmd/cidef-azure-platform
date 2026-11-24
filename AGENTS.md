@@ -194,3 +194,9 @@ SQL-first SALES (2026-11-19): candidatos DEALERS y agrupaciones OWN_STORES está
 - P4 scope correction: generic research across all supported motor contracts, no fixed domains, dates, report type or special monthly routing. `monthly_close_agent` remains only a compatibility package path (existing Docker/service entrypoint). `validate-p4-research.yml` MCP-only default requires no inputs, no model cost; full research accepts arbitrary question + research_goal, no mandatory SALES/FORUM or period. Acceptance checks execution/evidence lineage, not semantic correctness; inspect the P3 run separately. Existing Azure deployment remains unchanged.
 
 - P4 MCP probe 45419401049/job 138534458994 confirmed configured /mcp returns HTTP 404; motor server uses /api/mcp. User explicitly authorized changing only P4 MCP_URL. Manual workflow correct-p4-mcp-url.yml verifies motor FQDN from Azure and required tools before modifying existing P4 env variable, checks other env entries and image unchanged. This creates a new revision with the existing image; no candidate code deployment. Connector cannot dispatch workflow; execution and post-change SDK probe pending. Do not claim Azure correction until verified.
+
+
+## Seguimiento de cierre independiente — 2026-11-24
+- Usuario autorizó crear y desplegar `cidef-seguimiento-cierre`. Workflow manual `deploy-seguimiento-cierre.yml`, detalle en `docs/SEGUIMIENTO-CIERRE-DEPLOY.md`.
+- Fuente privada en repo nueva; requiere secret `CIDEF_SOURCE_REPO_TOKEN` con Contents read-only para checkout. No publicar el código privado ni ampliar la visibilidad para resolver el acceso.
+- Reutiliza Azure existente; no cambia las aplicaciones originales ni tablas. Estado: preparado, NO ejecutado; falta confirmar secret y lanzar Action. No afirmar creación ni despliegue sin run exitoso.
