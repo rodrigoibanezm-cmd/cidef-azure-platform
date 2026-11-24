@@ -38,6 +38,20 @@ export function monthCandidateDatePattern(year,month){
     ')([[:space:]]|$)';
 }
 
+// Shared SQL compiler for the diagnostic VIN reader and the one-snapshot
+// source loader. No post-recognition identity filter is pushed down.
+export function buildSalesCandidateVinSql(plan){
+  const {filters,year,month,commercial_universe:universe}=plan;
+  if(!planSalesCandidates(filters,filters.date_to))throw new Error('UNSUPPORTED_SALES_CANDIDATE_PLAN');
+  const params=[universe==='DEALERS'?'Concesionaria':'Cliente General',
+    monthCandidateDatePattern(year,month)];
+  const sql="SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin FROM ventas_raw v "+
+    "WHERE btrim(v.categoria_cliente) = $1 "+
+    "AND nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL "+
+    "AND btrim(v.fecha_factura) ~ $2";
+  return {sql,params};
+}
+
 export async function semanticSalesCandidates(input) {
   // Preserve the original diagnostic reader contract for existing callers.
   const plan = input?.filters ? input : (() => {
@@ -54,16 +68,7 @@ export async function semanticSalesCandidates(input) {
   if (!plan) throw new Error('UNSUPPORTED_SALES_CANDIDATE_PLAN');
   const {filters,year,month,commercial_universe:universe}=plan;
   if (!planSalesCandidates(filters,filters.date_to)) throw new Error('UNSUPPORTED_SALES_CANDIDATE_PLAN');
-  const params=[];
-  const bind=value => {params.push(value);return '$'+params.length;};
-  const datePattern=monthCandidateDatePattern(year,month);
-  const conditions=[
-    'btrim(v.categoria_cliente) = '+bind(universe==='DEALERS'?'Concesionaria':'Cliente General'),
-    "nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL",
-    'btrim(v.fecha_factura) ~ '+bind(datePattern),
-  ];
-  const sql='SELECT DISTINCT btrim(v.nro_vin_chasis) AS vin FROM ventas_raw v WHERE '+
-    conditions.join(' AND ')+' ORDER BY vin';
+  const {sql,params}=buildSalesCandidateVinSql(plan);
   const start=performance.now();
   const rows=await queryDb(sql,params);
   return {vins:rows.map(row=>row.vin),count:rows.length,
