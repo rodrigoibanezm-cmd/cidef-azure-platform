@@ -29,13 +29,41 @@ jobs:
           echo '=== Job timeout and resources ==='
           az containerapp job show -g "$RG" -n "$JOB" \
             --query '{timeout:properties.configuration.replicaTimeout,retry:properties.configuration.replicaRetryLimit,containers:properties.template.containers[].{name:name,resources:resources}}' -o json
-          echo '=== Azure system logs (best effort; no writes) ==='
+          echo '=== Azure console tail (stdout and stderr, read-only) ==='
           ENV_ID=$(az containerapp job show -g "$RG" -n "$JOB" --query 'properties.environmentId' -o tsv)
           WORKSPACE=$(az rest --method GET --url "https://management.azure.com${ENV_ID}?api-version=2024-03-01" --query 'properties.appLogsConfiguration.logAnalyticsConfiguration.customerId' -o tsv)
-          if [[ "$WORKSPACE" =~ ^[0-9a-fA-F-]{36}$ ]]; then
-            QUERY="union isfuzzy=true ContainerAppSystemLogs_CL, ContainerAppSystemLogs | extend Pod=tostring(column_ifexists('ContainerGroupName_s',column_ifexists('ContainerGroupName',''))), Msg=tostring(column_ifexists('Log_s',column_ifexists('Log',''))) | where TimeGenerated between(datetime(2026-11-24T13:00:00Z)..datetime(2026-11-24T13:35:00Z)) | where Pod contains 'eoxj4bp' or Msg contains 'eoxj4bp' | project TimeGenerated,Pod,Msg | order by TimeGenerated asc | take 100"
-            az monitor log-analytics query --workspace "$WORKSPACE" --analytics-query "$QUERY" --output json || echo 'System logs unavailable: inspect execution status above'
-          else
-            echo 'No Log Analytics workspace identifier; execution status above remains authoritative'
-          fi
+          [[ "$WORKSPACE" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo 'Log Analytics workspace not found'; exit 1; }
+          # Query only this historical execution. Show terminal lines in chronological order.
+          CONSOLE_QUERY="union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+          | extend Pod=tostring(column_ifexists('ContainerGroupName_s', column_ifexists('ContainerGroupName',''))),
+                   Stream=tostring(column_ifexists('Stream_s',column_ifexists('Stream',''))),
+                   Msg=tostring(column_ifexists('Log_s',column_ifexists('Log','')))
+          | where TimeGenerated between(datetime(2026-11-24T13:00:00Z)..datetime(2026-11-24T13:40:00Z))
+          | where Pod contains 'eoxj4bp'
+          | project TimeGenerated, Pod, Stream, Msg
+          | top 180 by TimeGenerated desc
+          | order by TimeGenerated asc"
+          az monitor log-analytics query --workspace "$WORKSPACE" --analytics-query "$CONSOLE_QUERY" -o json
+          echo '=== Console errors across the entire execution ==='
+          ERROR_QUERY="union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+          | extend Pod=tostring(column_ifexists('ContainerGroupName_s',column_ifexists('ContainerGroupName',''))),
+                   Stream=tostring(column_ifexists('Stream_s',column_ifexists('Stream',''))),
+                   Msg=tostring(column_ifexists('Log_s',column_ifexists('Log','')))
+          | where TimeGenerated between(datetime(2026-11-24T13:00:00Z)..datetime(2026-11-24T13:40:00Z))
+          | where Pod contains 'eoxj4bp'
+          | where Stream =~ 'stderr' or Msg has_any ('FAILED','ERROR','SNAPSHOT_NOT_PUBLISHED','P1_RECONCILED','SNAPSHOT_PUBLISHED','SIGTERM','SIGKILL','FATAL')
+          | project TimeGenerated, Stream, Msg
+          | order by TimeGenerated asc
+          | take 160"
+          az monitor log-analytics query --workspace "$WORKSPACE" --analytics-query "$ERROR_QUERY" -o json
+          echo '=== System events for this replica ==='
+          SYSTEM_QUERY="union isfuzzy=true ContainerAppSystemLogs_CL, ContainerAppSystemLogs
+          | extend Pod=tostring(column_ifexists('ContainerGroupName_s',column_ifexists('ContainerGroupName',''))),
+                   Msg=tostring(column_ifexists('Log_s',column_ifexists('Log','')))
+          | where TimeGenerated between(datetime(2026-11-24T13:00:00Z)..datetime(2026-11-24T13:40:00Z))
+          | where Pod contains 'eoxj4bp' or Msg contains 'eoxj4bp'
+          | project TimeGenerated,Pod,Msg
+          | order by TimeGenerated asc
+          | take 100"
+          az monitor log-analytics query --workspace "$WORKSPACE" --analytics-query "$SYSTEM_QUERY" -o json
           echo 'Read-only diagnosis complete'
