@@ -47,3 +47,14 @@ test('RVM sync is change-only for derived runs; existing default is unchanged', 
   await syncVehiculosFromRvm(execute);
   assert.deepEqual(statements.at(-1).params, [false]);
 });
+
+test('sell-in preserves certified VINs whose model identity is unresolved', async () => {
+  const code = await readFile(new URL('src/loaders/sales/refresh.js', root), 'utf8');
+  assert.match(code, /sale\.model_id == null \? 0 : Number\(sale\.model_id\)/);
+  assert.match(code, /if \(model === 0\) unresolvedModels \+= Number\(sale\.quantity\)/);
+  assert.match(code, /unresolved_model_vin: unresolvedModels/);
+  assert.match(code, /!Number\.isSafeInteger\(brand\) \|\| brand <= 0/);
+  assert.match(code, /!Number\.isSafeInteger\(model\) \|\| model < 0/);
+  assert.doesNotMatch(code.slice(code.indexOf('export async function publishCurrentDealerSellin'),
+    code.indexOf('export async function runSalesRefresh')), /model <= 0/);
+});
