@@ -46,6 +46,6 @@ test('candidate SQL cannot push down identities resolved only after P1 recogniti
 test('VIN candidate readers retain every non-VIN sale and related SKU evidence',()=>{
   const sales=readFileSync(new URL('../lib/ventas/loadVentasRows.js',import.meta.url),'utf8');
   const sku=readFileSync(new URL('../lib/product-model-resolution/loadSkuEvidence.js',import.meta.url),'utf8');
-  assert.match(sales,/OR nullif\(btrim\(nro_vin_chasis\),'')/); // replaced below
-  assert.match(sku,/OR nullif\(btrim\(nro_vin_chasis\),'')/); // replaced below
+  assert.ok(sales.includes("OR nullif(btrim(nro_vin_chasis),'') IS NULL"));
+  assert.ok(sku.includes("OR nullif(btrim(nro_vin_chasis),'') IS NULL"));
 });
