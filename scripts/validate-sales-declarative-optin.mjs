@@ -6,6 +6,7 @@ import { getSalesRunFactSet } from '../lib/data-floor/sales/preparation.js';
 import { field, match } from '../lib/data-floor/sales/dataset.js';
 import { FIELDS } from '../lib/data-floor/sales/contract.js';
 import { observeSalesSelection } from '../lib/data-floor/sales/operations.js';
+import { resolveSalesObservation } from '../lib/data-floor/salesCertifier.js';
 import { planSalesCandidates, semanticSalesCandidates } from './semantic-sales-prototype.mjs';
 
 process.env.SALES_SQL_FIRST_ENABLED='false';
@@ -76,6 +77,18 @@ for(const period of months)for(const universe of ['OWN_STORES','DEALERS']){
       assert.equal(evidence.coverage.source_scope,'SCOPED_CERTIFIED');
       const matched=normalize(full.select(candidateFilters).facts);
       assert.deepEqual(normalize(certified.select(candidateFilters).facts),matched);
+      const wrapped=await resolveSalesObservation({
+        measure:'VIN_SALES',time:{period,cutoff},
+        filters:{commercial_universe:universe,
+          brand_id:candidateFilters.brand_id,model_id:candidateFilters.model_id},
+      },run+'-wrapped');
+      assert.equal(wrapped.authority,'P1_CERTIFIED');
+      assert.equal(wrapped.status,'CERTIFIED');
+      assert.equal(wrapped.evidence_contract,'p1.cumulative_period_observation');
+      assert.equal(wrapped.coverage.source_scope,'SCOPED_CERTIFIED');
+      assert.equal(wrapped.payload.observed_value,
+        full.select({...baseFilters,brand_id:candidateFilters.brand_id,
+          model_id:candidateFilters.model_id}).facts.length);
     }finally{
       process.env.SALES_SQL_FIRST_SCOPE_CERTIFIED='false';
       process.env.SALES_SQL_FIRST_ENABLED='false';
