@@ -18,6 +18,9 @@ test('derived runner reuses certified publishers without reloading RAW', async (
   assert.match(runner, /syncVehiculosFromRvm\(\(text, values\) => sql\(client, text, values\)/);
   assert.match(runner, /onlyChanged: true/);
   assert.match(runner, /latest_rvm_ingestion/);
+  assert.match(runner, /pg_stat_all_tables/);
+  assert.match(runner, /relfilenode/);
+  assert.doesNotMatch(runner, /FROM \(SELECT md5\(to_jsonb\(t\)::text\) h FROM public\.rvm_raw t\)/);
   assert.match(runner, /ROLLBACK/);
 });
 
