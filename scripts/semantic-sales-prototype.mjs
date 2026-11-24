@@ -29,6 +29,15 @@ export function planSalesCandidates(filters, cutoffDate) {
     month:Number(from.slice(5,7)),commercial_universe:universe});
 }
 
+// Mirrors the MONTH component accepted by parseFechaFactura: ISO and MM/DD.
+// Superset of valid input dates; all final date filtering remains in P1.
+export function monthCandidateDatePattern(year,month){
+  const mm=String(month).padStart(2,'0'), yy=String(year).slice(-2);
+  return '^('+year+'-'+mm+'-[0-9]{2}|0?'+month+
+    '/[0-9]{1,2}/'+year+'|0?'+month+'/[0-9]{1,2}/'+yy+
+    ')([[:space:]]|$)';
+}
+
 export async function semanticSalesCandidates(input) {
   // Preserve the original diagnostic reader contract for existing callers.
   const plan = input?.filters ? input : (() => {
@@ -47,12 +56,7 @@ export async function semanticSalesCandidates(input) {
   if (!planSalesCandidates(filters,filters.date_to)) throw new Error('UNSUPPORTED_SALES_CANDIDATE_PLAN');
   const params=[];
   const bind=value => {params.push(value);return '$'+params.length;};
-  const mm=String(month).padStart(2,'0'), yy=String(year).slice(-2);
-  // parseFechaFactura recognizes YYYY-MM-DD and MM/DD/YYYY or MM/DD/YY.
-  // This regex is a superset (it need not reject invalid days).
-  const datePattern='^('+year+'-'+mm+'-[0-9]{2}|0?'+month+
-    '/[0-9]{1,2}/'+year+'|0?'+month+'/[0-9]{1,2}/'+yy+
-    ')([[:space:]]|$)';
+  const datePattern=monthCandidateDatePattern(year,month);
   const conditions=[
     'btrim(v.categoria_cliente) = '+bind(universe==='DEALERS'?'Concesionaria':'Cliente General'),
     "nullif(btrim(v.nro_vin_chasis),'') IS NOT NULL",
