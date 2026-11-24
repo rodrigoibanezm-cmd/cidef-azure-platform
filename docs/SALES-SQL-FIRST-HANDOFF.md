@@ -109,3 +109,25 @@ El cuello de botella medido incluye carga/preparación de datos globales para pr
 - Baseline actual P1 con herramienta desplegada (run `sql-first-seller-baseline-20261120`): OWN_STORES, Foton G7, agosto 2026, 107 VIN totales. seller_id=232 Virginia Tampoa: 4 VIN; seller_id=44: 6; seller_id=111: 6. Evidencia P1 `CERTIFIED` agrupada por SELLER.
 - Después de un despliegue explícitamente autorizado: ejecutar `sales_sql_first_validate` con OWN_STORES, brand_id=89, model_id=28, seller_id=232, date_from=2026-08-01, date_to=2026-08-31 (4 VIN esperados); segundo control seller_id=44 (6 VIN). Confirmar 11/11, igualdad de VIN/campos/medidas/validación, estados de evidencia, aislación y latencia. No habilitar el flag global hasta pasar. También validar seller + store en otro caso antes de ampliar.
 - Riesgo controlado: pertenencia histórica a tienda se computa después del reconocimiento P1; el SQL candidato NO debe usar roles/intervalos para excluir VIN ni declarar certificación completa. No compartir resultados entre runs.
+
+## 2026-11-24 — Certificación de alcance SQL-first (sin despliegue)
+**Motivo:** 60/60 comparaciones anteriores NO garantizaban que la selección SQL fuese un superset de P1. Auditoría reveló dos riesgos reales: `parseFechaFactura` interpreta fechas slash como **MM/DD/YYYY** (la selección SQL anterior usaba DD/MM/YYYY) y SQL aplicaba filtros de identidad (producto/sucursal/dealer/vendedor) antes del reconocimiento, cuando dichos atributos se resuelven en P1.
+
+**Invariante demostrable para la ruta mensual admitida:**
+1. Una venta reconocida por P1 dentro del mes y del canal solicitado procede de una fila `ventas_raw` cuyo `categoria_cliente` coincide con el canal y cuya `fecha_factura` es parseable en ese mes.
+2. La selección temprana ahora filtra **solo mes y categoría RAW**, con patrón compatible con `parseFechaFactura`; nunca adelanta filtros derivados de marca, modelo, tienda, dealer ni vendedor. Los filtros comerciales se aplican después del reconocimiento P1.
+3. El VIN seleccionado incorpora **todas sus filas históricas** antes de reconocer LAST fecha_factura. Las filas sin VIN se conservan íntegramente (P1 las reconoce por fila). `loadSkuEvidence` incluye también sus SKU y consulta evidencia global por SKU; colores VIN se normalizan igual que el camino completo.
+4. El conjunto de candidatos y las filas `ventas_raw` se capturan en **una sola sentencia PostgreSQL**, con un mismo snapshot MVCC de fuente. Esto evita omisiones causadas por cambios entre la consulta de candidatos y la lectura de ventas. Las lecturas de otras tablas mantienen la consistencia existente de P1; NO se introdujo una transacción global multi-tabla.
+5. El fact set continúa rechazando consultas fuera de su `source_filters` exacto y aislando las preparaciones por `run_id`, filtros y nivel de certificación. No hay persistencia entre runs.
+
+**Contrato de evidencia:**
+- `SALES_SQL_FIRST_ENABLED=true` mantiene SQL-first habilitado; `SALES_SQL_FIRST_SCOPE_CERTIFIED=true` es **un opt-in independiente, por defecto apagado**.
+- Solo cuando ambos están habilitados, una consulta selectiva soportada publica autoridad `P1_CERTIFIED`, contrato P1 de observación y `coverage.source_scope='SCOPED_CERTIFIED'`, con `lineage.scope_certification='SQL_FIRST_MONTHLY_SOURCE_SUPERSET_V1'`. No declara `FULL_SOURCE` ni cobertura global.
+- Diagnósticos `diagnostic_sql_first=true` SIEMPRE conservan `P1_PARTIAL_SOURCE`; filtros no soportados conservan P1 completo. El fingerprint temporal global no se adjunta a evidencias scoped. No activar este opt-in en producción sin validación verde y autorización de despliegue/configuración.
+
+**Validación automatizada:** `test/sales-sql-first-exhaustiveness.test.mjs` comprueba formatos de fecha, falta de pushdown de identidad, inclusión de ventas sin VIN, misma captura snapshot, autoridad y prohibición de scope más amplio. `scripts/validate-sales-declarative-optin.mjs` compara **todos los registros** de 4 universos mes×canal (mes anterior y tres meses atrás, derivado de la fecha de ejecución) contra P1 completo: VIN, source_id y todos los campos FIELDS, incluyendo modelos, dealers y vendedores. Además valida la ruta con opt-in certificado y el aislamiento entre niveles en un mismo run. `.github/workflows/validate-sales-declarative-optin.yml` es read-only y se activa si cambian selectores, loaders, reconocimiento y contratos afectados.
+
+**Evidencia previa a la última revisión:** run `45409489663` y run `45409560973`, pruebas locales 5/5 y **2.156/2.156 registros** en agosto/octubre 2026, cero faltantes y atributos iguales. La prueba final del contrato `resolveSalesObservation` se añadió después y requiere verificar su propio Action antes de reportar PASS definitivo.
+
+**Límite:** No confundir certificación de **alcance observado** con equivalencia de un universo global, ni con una transacción consistente de todas las tablas. Si se modifica el parser, la semántica de fuente/canal o la lectura de atributos, CI debe volver a pasar antes de habilitar la certificación scoped.
+
