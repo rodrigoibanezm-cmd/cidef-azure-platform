@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { getSalesRunFactSet } from '../lib/data-floor/sales/preparation.js';
 import { field, match } from '../lib/data-floor/sales/dataset.js';
 import { FIELDS } from '../lib/data-floor/sales/contract.js';
+import { observeSalesSelection } from '../lib/data-floor/sales/operations.js';
 import { planSalesCandidates, semanticSalesCandidates } from './semantic-sales-prototype.mjs';
 
 process.env.SALES_SQL_FIRST_ENABLED='false';
@@ -59,6 +60,26 @@ for(const period of months)for(const universe of ['OWN_STORES','DEALERS']){
       missing_rows:expected.filter(row=>!actual.some(x=>JSON.stringify(x)===JSON.stringify(row))).slice(0,5),
       extra_rows:actual.filter(row=>!expected.some(x=>JSON.stringify(x)===JSON.stringify(row))).slice(0,5)}));
     throw new Error('SQL_FIRST_INCOMPLETE_MONTHLY_SCOPE');
+  }
+  if(report.length===1){
+    // Both tiers must remain isolated even in the same run.
+    process.env.SALES_SQL_FIRST_ENABLED='true';
+    process.env.SALES_SQL_FIRST_SCOPE_CERTIFIED='true';
+    try{
+      const {factSet:certified}=await getSalesRunFactSet(run,{
+        commercial_universe:universe,cutoff_date:cutoff,candidate_filters:candidateFilters,
+      });
+      assert.equal(certified.ref.source_scope,'SCOPED_CERTIFIED');
+      assert.notEqual(certified.ref.preparation_id,partial.ref.preparation_id);
+      const evidence=observeSalesSelection(certified.select(candidateFilters));
+      assert.equal(evidence.authority,'P1_CERTIFIED');
+      assert.equal(evidence.coverage.source_scope,'SCOPED_CERTIFIED');
+      const matched=normalize(full.select(candidateFilters).facts);
+      assert.deepEqual(normalize(certified.select(candidateFilters).facts),matched);
+    }finally{
+      process.env.SALES_SQL_FIRST_SCOPE_CERTIFIED='false';
+      process.env.SALES_SQL_FIRST_ENABLED='false';
+    }
   }
   console.log(JSON.stringify({status:'SCOPE_PASS',...test}));
 }
