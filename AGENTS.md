@@ -196,10 +196,10 @@ SQL-first SALES (2026-11-19): candidatos DEALERS y agrupaciones OWN_STORES está
 - P4 MCP probe 45419401049/job 138534458994 confirmed configured /mcp returns HTTP 404; motor server uses /api/mcp. User explicitly authorized changing only P4 MCP_URL. Manual workflow correct-p4-mcp-url.yml verifies motor FQDN from Azure and required tools before modifying existing P4 env variable, checks other env entries and image unchanged. This creates a new revision with the existing image; no candidate code deployment. Connector cannot dispatch workflow; execution and post-change SDK probe pending. Do not claim Azure correction until verified.
 
 
-## Seguimiento de cierre independiente — 2026-11-24
-- Usuario autorizó crear y desplegar `cidef-seguimiento-cierre`. Workflow manual `deploy-seguimiento-cierre.yml`, detalle en `docs/SEGUIMIENTO-CIERRE-DEPLOY.md`.
-- Fuente privada en repo nueva; requiere secret `CIDEF_SOURCE_REPO_TOKEN` con Contents read-only para checkout. No publicar el código privado ni ampliar la visibilidad para resolver el acceso.
-- Reutiliza Azure existente; no cambia las aplicaciones originales ni tablas. Estado: preparado, NO ejecutado; falta confirmar secret y lanzar Action. No afirmar creación ni despliegue sin run exitoso.
+## Seguimiento de cierre — despliegue directo (2026-11-25)
+- La creación/despliegue de cidef-seguimiento-cierre está autorizada. El workflow vive exclusivamente en esa repo: `.github/workflows/deploy-azure.yml`, environment Production.
+- Se retiró el camino entre repositorios; no requiere CIDEF_SOURCE_REPO_TOKEN. No publicar ni volver a copiar código privado en esta plataforma.
+- Detalles y confianza OIDC: `cidef-seguimiento-cierre/docs/DEPLOYMENT.md`. No afirmar creación en Azure hasta revisar un run exitoso.
 
 ## 2026-11-25 — Derivadas vs unified MCP (not deployed)
 - Verified latest `lib/mcp/server.js`: normal public tool surface is `data_query`, `p2_discover`, `p2_describe`, `p2_execute`, `run_trace`; old P1 handlers are disabled publicly unless `CIDEF_MCP_TOOL_SURFACE=legacy` but are available through `data_query.action`. This directly explains historical `Tool data_observe disabled` in `cidef-data-loader-job-eoxj4bp` snapshot Forum, September 2026. No changes to P1 data or computation.
