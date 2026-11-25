@@ -6,6 +6,10 @@ on:
     paths:
       - 'lib/mcp/server.js'
       - 'lib/data-floor/registry.js'
+      - 'lib/data-floor/evidenceRequests.js'
+      - 'lib/data-floor/sales/contract.js'
+      - 'lib/data-floor/targetsCertifier.js'
+      - 'test/evidence-requests.test.mjs'
       - 'test/mcp-unified-surface.test.mjs'
       - 'test/data-query-entrypoint.test.mjs'
       - '.github/workflows/ci-mcp-unified-surface.yml'
@@ -28,7 +32,7 @@ jobs:
       - name: Syntax and MCP tool-list tests
         run: |
           node --check lib/mcp/server.js
-          node --test test/data-query-entrypoint.test.mjs test/mcp-unified-surface.test.mjs
+          node --test test/data-query-entrypoint.test.mjs test/mcp-unified-surface.test.mjs test/evidence-requests.test.mjs test/domain-declarative-sql.test.mjs
       - name: Critical runtime dependency vulnerabilities
         run: |
           npm --prefix motor-test-azure install --package-lock-only --ignore-scripts --no-audit --no-fund

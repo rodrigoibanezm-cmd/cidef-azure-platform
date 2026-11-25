@@ -35,6 +35,7 @@ test('unified surface keeps one factual tool, P2 and the run trace', async () =>
     assert.ok(query.description.includes(source + ' — measures:'), source);
   }
   assert.deepEqual(query.inputSchema.required, ['run_id']);
+  assert.ok(query.inputSchema.properties.request.properties.evidence_shape);
   const actions=query.inputSchema.properties.action.enum;
   for(const name of ['data_observe','data_fetch','data_resolve','data_describe',
     'data_inspect','sales_observe_many','sales_observe_windows']) {
