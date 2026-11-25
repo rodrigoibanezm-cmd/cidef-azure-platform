@@ -1,0 +1,19 @@
+{
+  "budget_usd": 0.5,
+  "max_output_tokens": 4096,
+  "minimum_output_tokens": 1024,
+  "input_safety_factor": 1.1,
+  "source": "https://developers.openai.com/api/docs/models/gpt-5.1",
+  "rates": {
+    "gpt-5.1": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125
+    },
+    "gpt-5.1-2025-11-13": {
+      "input": 1.25,
+      "output": 10,
+      "cached": 0.125
+    }
+  }
+}

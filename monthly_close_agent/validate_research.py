@@ -27,6 +27,10 @@ async def main():
         run_id = report.parent.name
         if any(event.get("run_id") != run_id for event in events):
             raise RuntimeError("RUN_ID_MISMATCH")
+        usage = json.loads(report.with_name("usage.json").read_text())
+        if usage["budget_stopped"]:
+            print("PARTIAL: budget stopped; run_id=" + run_id)
+            return
         status = evidence_status(events)
         if status == "NO_EVIDENCE":
             raise RuntimeError("NO_EVIDENCE")

@@ -14,6 +14,10 @@ on:
         description: Why adaptive investigation is needed (only for full research)
         required: false
         type: string
+      budget_usd:
+        description: Maximum estimated USD per research
+        type: string
+        default: '0.50'
       model:
         description: Optional override (blank uses existing Azure model)
         required: false
@@ -27,6 +31,8 @@ jobs:
     environment: Production
     timeout-minutes: 20
     env:
+      P4_BUDGET_USD: ${{ inputs.budget_usd }}
+      P4_MODEL_RATES_JSON: ${{ vars.P4_MODEL_RATES_JSON }}
       MCP_ONLY: ${{ inputs.mcp_only }}
       QUESTION: ${{ inputs.question }}
       RESEARCH_GOAL: ${{ inputs.research_goal }}

@@ -4,6 +4,7 @@ on:
     paths:
       - 'monthly_close_agent/**'
       - 'test/test_p4_unified.py'
+      - 'test/test_p4_budget.py'
       - 'Dockerfile.p4'
       - '.github/workflows/ci-p4.yml'
   workflow_dispatch:
@@ -21,5 +22,6 @@ jobs:
       - run: pip install -r monthly_close_agent/requirements.txt
       - run: python -m compileall -q monthly_close_agent
       - run: python -m unittest discover -s test -p test_p4_unified.py
+      - run: python -m unittest discover -s test -p test_p4_budget.py
       - run: pip check
       - run: docker build -f Dockerfile.p4 -t p4-ci .

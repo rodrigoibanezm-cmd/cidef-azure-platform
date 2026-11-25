@@ -7,6 +7,10 @@ from uuid import uuid4
 
 from agents import Agent, ModelSettings, RunConfig, Runner
 
+from openai import AsyncOpenAI
+from agents.models.openai_responses import OpenAIResponsesModel
+from .budget import Budget, BudgetStop
+from .budget_client import BudgetedResponses
 from .connection import CertifiedMCP
 from .evidence import evidence_status
 
@@ -18,16 +22,25 @@ async def generate(question, *, url, model, output_dir, max_turns=40):
     run_id = "p4-" + str(uuid4())
     destination = Path(output_dir) / run_id
     mission = Path(__file__).with_name("mission.md").read_text(encoding="utf-8")
-    async with CertifiedMCP(url, run_id) as server:
+    budget = Budget(model)
+    async with AsyncOpenAI(max_retries=0) as client, CertifiedMCP(url, run_id) as server:
+        client.responses = BudgetedResponses(client.responses, budget)
+        guarded_model = OpenAIResponsesModel(model=model, openai_client=client)
         agent = Agent(
             name="cidef-p4",
-            instructions=mission, model=model,
+            instructions=mission, model=guarded_model,
             mcp_servers=[server], model_settings=ModelSettings(parallel_tool_calls=False),
         )
-        result = await Runner.run(
-            agent, question + f" run_id: {run_id}.",
-            max_turns=max_turns, run_config=RunConfig(tracing_disabled=True),
-        )
+        result = None
+        try:
+            result = await Runner.run(
+                agent, question + f" run_id: {run_id}. Prioriza evidencia útil y responde sin consultas redundantes.",
+                max_turns=max_turns, run_config=RunConfig(tracing_disabled=True),
+            )
+        except BudgetStop:
+            pass
+        finally:
+            print(json.dumps({"p4_usage": budget.summary()}), flush=True)
         trace = await server.call_tool("run_trace", {})
         if trace.is_error:
             raise RuntimeError("P3 no devolvió una traza válida; no se publicó informe")
@@ -42,6 +55,15 @@ async def generate(question, *, url, model, output_dir, max_turns=40):
         (destination / "trace.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8",
         )
+        (destination / "usage.json").write_text(json.dumps(budget.summary(), indent=2))
+        if budget.stopped:
+            report = destination / "report.md"
+            report.write_text("# Investigación parcial: límite presupuestario\n\n"
+                              f"Run: {run_id}. Autoridad observada: {status}.\n\n"
+                              "Se interrumpió antes de otra llamada al modelo. "
+                              "La evidencia disponible se conserva en trace.json. "
+                              "No se generó una conclusión completa.\n", encoding="utf-8")
+            return report
         if status == "NO_EVIDENCE":
             raise RuntimeError(f"Sin evidencia P1 reconocida. Traza: {destination / 'trace.json'}")
         if not isinstance(result.final_output, str) or not result.final_output.strip():
