@@ -27,3 +27,14 @@ class BudgetTests(unittest.IsolatedAsyncioTestCase):
     def test_unknown_model_blocked(self):
         with self.assertRaises(ValueError):
             Budget("unknown")
+
+
+    def test_real_mcp_result_fields(self):
+        from mcp.types import CallToolResult, TextContent
+        from monthly_close_agent.evidence import decode_trace
+        payload = {"run": {"run_id": "test"}, "events": []}
+        self.assertEqual(decode_trace(CallToolResult(content=[], structuredContent=payload)), payload)
+        self.assertEqual(decode_trace(CallToolResult(content=[
+            TextContent(type="text", text='{"events": []}') ])), {"events": []})
+        with self.assertRaises(RuntimeError):
+            decode_trace(CallToolResult(content=[], isError=True))

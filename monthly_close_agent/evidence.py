@@ -18,3 +18,16 @@ def evidence_status(events):
     if "P1_PARTIAL_SOURCE" in authorities:
         return "MIXED_OR_PARTIAL" if "P1_CERTIFIED" in authorities else "PARTIAL_ONLY"
     return "HAS_CERTIFIED_EVIDENCE" if authorities else "NO_EVIDENCE"
+
+
+def decode_trace(trace):
+    """Decode the MCP Python CallToolResult wire fields."""
+    import json
+    if trace.isError:
+        raise RuntimeError("P3 no devolvió una traza válida")
+    payload = trace.structuredContent
+    if payload is None:
+        payload = json.loads(next(c.text for c in trace.content if c.type == "text"))
+    if not isinstance(payload, dict):
+        raise ValueError("P3_INVALID_TRACE")
+    return payload

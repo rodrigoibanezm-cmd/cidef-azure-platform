@@ -50,3 +50,12 @@ jobs:
       - run: pip install -r monthly_close_agent/requirements.txt
       - name: Run isolated research using existing Azure P4 configuration
         run: python scripts/validate-p4-azure.py
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.mcp_only == false
+        with:
+          name: p4-research-result
+          path: |
+            p4-research-output/*/report.md
+            p4-research-output/*/usage.json
+          if-no-files-found: ignore
+          retention-days: 3

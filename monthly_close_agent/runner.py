@@ -12,7 +12,7 @@ from agents.models.openai_responses import OpenAIResponsesModel
 from .budget import Budget, BudgetStop
 from .budget_client import BudgetedResponses
 from .connection import CertifiedMCP
-from .evidence import evidence_status
+from .evidence import evidence_status, decode_trace
 
 
 async def generate(question, *, url, model, output_dir, max_turns=40):
@@ -21,6 +21,7 @@ async def generate(question, *, url, model, output_dir, max_turns=40):
         raise ValueError("La pregunta no puede estar vacía")
     run_id = "p4-" + str(uuid4())
     destination = Path(output_dir) / run_id
+    print(json.dumps({"run_id": run_id, "model": model}), flush=True)
     mission = Path(__file__).with_name("mission.md").read_text(encoding="utf-8")
     budget = Budget(model)
     async with AsyncOpenAI(max_retries=0) as client, CertifiedMCP(url, run_id) as server:
@@ -42,11 +43,7 @@ async def generate(question, *, url, model, output_dir, max_turns=40):
         finally:
             print(json.dumps({"p4_usage": budget.summary()}), flush=True)
         trace = await server.call_tool("run_trace", {})
-        if trace.is_error:
-            raise RuntimeError("P3 no devolvió una traza válida; no se publicó informe")
-        payload = trace.structured_content
-        if not payload:
-            payload = json.loads(next(c.text for c in trace.content if c.type == "text"))
+        payload = decode_trace(trace)
         if (payload.get("run") or {}).get("run_id") != run_id:
             raise RuntimeError("P3 no confirmó la identidad de esta ejecución")
         events = payload.get("events", [])
