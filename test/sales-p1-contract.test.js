@@ -73,7 +73,7 @@ test('SALES respects current available stock from vehicle XLS, not invoice-only 
     "btrim(stock.vigente) = '1'",
     "btrim(coalesce(stock.esta_reservado, '')) = '0'",
     "nullif(btrim(stock.numero_factura), '') IS NULL",
-    "nullif(btrim(stock.fecha_factura), '') IS NULL",
+    "nullif(btrim(stock.fecha_factura::text), '') IS NULL",
   ]) assert.ok(VENTAS_CONTEXT_SELECT.includes(clause));
   assert.doesNotMatch(VENTAS_CONTEXT_SELECT, /LVAV2AVB8TE322187|78898/);
   const queries=[];
