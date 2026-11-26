@@ -1,0 +1,23 @@
+name: Verify SALES current stock authority
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lib/ventas/loadVentasRows.js'
+      - 'test/sales-p1-contract.test.js'
+      - '.github/workflows/verify-sales-stock-authority.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --omit=dev --ignore-scripts --no-audit --no-fund
+      - run: node --check lib/ventas/loadVentasRows.js
+      - run: node --test test/sales-p1-contract.test.js
