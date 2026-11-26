@@ -1,0 +1,54 @@
+name: Diagnose Forum live database wait (read-only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund pg@8.16.3
+      - name: Inspect PostgreSQL backend waits and Forum snapshot state
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const client=new pg.Client({connectionString:process.env.AZURE_DATABASE_URL,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:12000,statement_timeout:25000,application_name:'forum-readonly-wait-diagnostic'});
+          try {
+            await client.connect();
+            await client.query('BEGIN READ ONLY');
+            const checks={
+              active_queries:`SELECT pid, usename, application_name, state, wait_event_type, wait_event,
+                round(extract(epoch from now()-query_start)::numeric,1) AS query_seconds,
+                round(extract(epoch from now()-xact_start)::numeric,1) AS transaction_seconds,
+                left(regexp_replace(query, '[[:space:]]+', ' ', 'g'), 230) AS query_sample,
+                pg_blocking_pids(pid) AS blocking_pids
+                FROM pg_stat_activity WHERE datname=current_database()
+                AND pid<>pg_backend_pid() ORDER BY query_start NULLS LAST LIMIT 35`,
+              advisory_locks:`SELECT a.pid,a.state,a.wait_event_type,a.wait_event,
+                l.granted,l.classid,l.objid,
+                round(extract(epoch from now()-a.query_start)::numeric,1) AS query_seconds,
+                left(regexp_replace(a.query, '[[:space:]]+', ' ', 'g'), 160) AS query_sample
+                FROM pg_locks l JOIN pg_stat_activity a USING(pid)
+                WHERE l.locktype='advisory' AND a.datname=current_database()
+                ORDER BY l.granted,a.query_start LIMIT 30`,
+              published_snapshot:`SELECT count(*)::int AS bundles,
+                count(*) FILTER (WHERE payload->'refresh'->>'version'='forum.incremental.v2')::int AS version_2,
+                max(updated_at)::text AS latest_update
+                FROM forum_ventas_snapshot_v01 WHERE dimension='BUNDLE'`
+            };
+            for(const [section,sql] of Object.entries(checks)){
+              const {rows}=await client.query(sql);
+              console.log(JSON.stringify({section,rows}));
+            }
+            await client.query('ROLLBACK');
+          }catch(e){console.error(JSON.stringify({error:e.message,code:e.code}));process.exitCode=1;}
+          finally{await client.end().catch(()=>{});}
+          NODE
