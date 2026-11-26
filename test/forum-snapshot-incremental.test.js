@@ -49,7 +49,7 @@ test('current SALES change reuses all FORUM evidence and matches a full reconstr
   const inc=await f.run({cache:indexCache(old.rows)});
   assert.equal(inc.stats.rebuilt,1);assert.equal(inc.stats.reused,5);
   assert.equal(f.calls.filter(c=>c.name==='data_observe').length,0);
-  assert.equal(f.calls.length,4); // fetch + observe + two original acceptance checks
+  assert.equal(f.calls.length,2); // one certified SALES fetch and one observation
   assertSnapshotParity(inc.rows,(await f.run({forceFull:true})).rows);
 });
 test('historical SALES correction invalidates its cumulative descendants, both old and new months on date moves',async()=>{
@@ -153,4 +153,28 @@ test('engine signature ignores unrelated lib edits but follows imported dependen
     await writeFile(join(root,'lib','forum-snapshot','helper.js'),'export const value=2;\n');
     assert.notEqual(await engineSignature(pathToFileURL(root+'/')),base);
   } finally {await rm(root,{recursive:true,force:true});}
+});
+
+
+test('v1 transport migration reuses intact matching data and upgrades metadata',async()=>{
+  const f=fixture(),full=await f.run({forceFull:true});
+  const prior=full.rows.map(r=>{
+    const copy=structuredClone(r);
+    copy.payload.refresh.version='forum.incremental.v1';
+    copy.payload.refresh.engine='previous-mcp-transport';
+    return copy;
+  });
+  f.calls.length=0;
+  const warm=await f.run({cache:indexCache(prior)});
+  assert.equal(warm.stats.reused,6);
+  assert.equal(f.calls.length,0);
+  assert.ok(warm.rows.every(r=>r.payload.refresh.version==='forum.incremental.v2'));
+  assertSnapshotParity(warm.rows,full.rows);
+  const corrupted=structuredClone(prior[0]);
+  corrupted.payload.facts[0].vin='corrupted';
+  assert.equal(planBundle(f.context,corrupted.network,corrupted.period,corrupted).reuse,false);
+  f.quotations['2026-02']=2;f.refresh();
+  const plan=inspectPlan(f.context,indexCache(prior));
+  assert.equal(plan.find(p=>p.period==='2026-01').reuse,true);
+  assert.equal(plan.find(p=>p.period==='2026-02').reuse,false);
 });
