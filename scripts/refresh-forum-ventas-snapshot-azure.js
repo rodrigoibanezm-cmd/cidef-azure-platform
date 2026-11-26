@@ -33,7 +33,9 @@ try{
   await client.query('SET statement_timeout=240000');
   if(!(await client.query("SELECT to_regclass('public.forum_ventas_snapshot_v01')::text relation")).rows[0].relation)throw new Error('EXISTING_FORUM_SNAPSHOT_TABLE_REQUIRED');
   installed=true;
-  const initialHash=await snapshotHash(),started=Date.now();
+  // Publishing never uses the initial snapshot hash; avoid a full JSONB scan.
+  // Read-only validation and comparison still verify that the snapshot is unchanged.
+  const initialHash=publish?null:await snapshotHash(),started=Date.now();
   const sourceCutoffs=await cutoffs();
   if(!sourceCutoffs.sales||!sourceCutoffs.forum)throw new Error('SOURCE_CUTOFF_MISSING');
   const context=await captureDependencies(client,{year,cutoffs:sourceCutoffs,engine});
