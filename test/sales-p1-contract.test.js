@@ -64,3 +64,23 @@ test('SALES P1 publishes financial entity as a recognized-sale field and dimensi
   assert.ok(contract.dimensions.includes('FINANCIAL_ENTITY'));
   assert.ok(contract.semantic_constraints.some(x=>/FINANCIAL_ENTITY preserves ventas_raw\.entidad_financiera/.test(x)));
 });
+
+test('SALES respects current available stock from vehicle XLS, not invoice-only history', async () => {
+  const { VENTAS_CONTEXT_SELECT, loadVentasRows } = await import('../lib/ventas/loadVentasRows.js');
+  assert.match(VENTAS_CONTEXT_SELECT, /NOT EXISTS\s*\(\s*SELECT 1 FROM vehiculos_raw stock/);
+  for (const clause of [
+    "upper(btrim(stock.vin_chasis)) = upper(btrim(ventas_raw.nro_vin_chasis))",
+    "btrim(stock.vigente) = '1'",
+    "btrim(coalesce(stock.esta_reservado, '')) = '0'",
+    "nullif(btrim(stock.numero_factura), '') IS NULL",
+    "nullif(btrim(stock.fecha_factura), '') IS NULL",
+  ]) assert.ok(VENTAS_CONTEXT_SELECT.includes(clause));
+  assert.doesNotMatch(VENTAS_CONTEXT_SELECT, /LVAV2AVB8TE322187|78898/);
+  const queries=[];
+  const sql={query:async (q,params=[]) => {queries.push([q,params]);return [];}};
+  await loadVentasRows(sql);
+  await loadVentasRows(sql,['LVAV2JVB4TE322929']);
+  assert.equal(queries.length,2);
+  assert.ok(queries.every(([q])=>q.includes('NOT EXISTS')));
+  assert.deepEqual(queries[1][1],[['LVAV2JVB4TE322929']]);
+});
