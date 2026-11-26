@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
@@ -139,7 +140,17 @@ export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
       return { ...synced, ...dates };
     });
     // The canonical processor operates on the entire current RAW state; it cannot replay an old day.
-    const canonicalSignature = await fingerprint(client, INPUTS);
+    // A change in current SALES recognition must invalidate the canonical stage
+    // even when all daily XLS inputs are byte-identical.
+    const canonicalCodeSignature = createHash('sha256');
+    for (const path of [
+      '../lib/ventas/loadVentasRows.js',
+      '../lib/canonical/vehiculo-salida-v01.js',
+      '../lib/canonical/refresh-vehiculo-canonico-v01.js',
+    ]) canonicalCodeSignature.update(readFileSync(new URL(path, import.meta.url)));
+    const canonicalSignature = createHash('sha256')
+      .update(await fingerprint(client, INPUTS))
+      .update(canonicalCodeSignature.digest('hex')).digest('hex');
     await runStage(client, cutoff, 'vehiculo_canonico', canonicalSignature, async () => {
       const execute = (text, values) => sql(client, text, values);
       const preview = await refreshVehiculoCanonicoV01({ dry_run: true, execute });
