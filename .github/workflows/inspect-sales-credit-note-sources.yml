@@ -34,7 +34,7 @@ jobs:
           prefixes=Counter()
           latest={}
           for name in names:
-              match=re.fullmatch(r'(ventas/NC_[A-Za-z0-9_-]+_)(\\d{4}_\\d{2}_\\d{2})\\.xlsx',name,re.I)
+              match=re.fullmatch(r'(ventas/NC_[A-Za-z0-9_-]+_)(\d{4}_\d{2}_\d{2})\.xlsx',name,re.I)
               if match:
                   prefix,date=match.groups()
                   prefixes[prefix]+=1
