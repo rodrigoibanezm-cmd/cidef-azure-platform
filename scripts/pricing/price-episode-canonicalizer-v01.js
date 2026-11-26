@@ -320,6 +320,28 @@ export function buildPriceEpisodes(statePoints) {
     || a.price_version_id - b.price_version_id);
 }
 
+// Commercial retirement is explicit data, never inferred from an omitted workbook row.
+export function applyCommercialRetirements(episodes, successors, statePoints) {
+  const dates = new Map();
+  for (const rule of successors) {
+    const id = Number(rule.version_id);
+    const from = dateOnly(rule.effective_from);
+    if (!from || dates.has(id)) throw new Error('Invalid commercial retirement for version ' + id);
+    if (statePoints.some(p => p.resolution_status === 'resolved' && Number(p.version_id) === id && p.vigencia_desde >= from))
+      throw new Error('Published price contradicts commercial retirement for version ' + id);
+    dates.set(id, from);
+  }
+  return episodes.map(e => {
+    const from = dates.get(Number(e.version_id));
+    if (!from) return e;
+    if (e.vigencia_desde >= from) throw new Error('Episode starts after commercial retirement');
+    const end = previousDate(from);
+    return e.vigencia_hasta == null || e.vigencia_hasta > end
+      ? { ...e, vigencia_hasta: end }
+      : e;
+  });
+}
+
 function inRange(date, episode) {
   return date >= episode.vigencia_desde && (episode.vigencia_hasta == null || date <= episode.vigencia_hasta);
 }
@@ -432,7 +454,7 @@ function diagnostic(resolution, statePoints, episodes, vinAssignment, dryRun) {
 }
 
 async function loadInputs() {
-  const [priceVersions, aliases, masterRows, historyRows, vehicleRows] = await Promise.all([
+  const [priceVersions, aliases, masterRows, historyRows, vehicleRows, successors] = await Promise.all([
     queryDb(`SELECT price_version_id, marca, modelo, version, version_raw FROM public.price_versions ORDER BY price_version_id`),
     queryDb(`SELECT fuente, nivel, estado, valor_raw, contexto_marca_raw, contexto_modelo_raw, version_id FROM public.producto_aliases_v01 WHERE fuente='lista_precios' AND nivel='VERSION' AND estado='RESUELTO'`),
     queryDb(`
@@ -449,8 +471,9 @@ async function loadInputs() {
     `),
     queryDb(`SELECT price_history_id, price_version_id, vigencia_desde, precio_neto, precio_lista, precio_con_iva, bono_cidef, bono_forum, bono_mes, precio_efectivo_pre_mes_sin_iva, precio_efectivo_pre_mes_con_iva, precio_efectivo_final_sin_iva, precio_efectivo_final_con_iva, source_file, source_sheet FROM public.price_history ORDER BY price_version_id, vigencia_desde, price_history_id`),
     queryDb(`SELECT vehiculo_id, vin, version_id, fecha_factura, numero_factura, vendido FROM public.vehiculo_canonico WHERE vendido=true AND version_id IS NOT NULL AND fecha_factura IS NOT NULL ORDER BY vehiculo_id`),
+    queryDb(`SELECT version_id, successor_version_id, effective_from FROM public.price_version_successors_v01 ORDER BY version_id`),
   ]);
-  return { priceVersions, aliases, masterRows, historyRows, vehicleRows };
+  return { priceVersions, aliases, masterRows, historyRows, vehicleRows, successors };
 }
 
 function persistedEpisodePayload(episodes) {
@@ -629,7 +652,7 @@ export async function priceEpisodeCanonicalizerV01(options = {}) {
   const inputs = await loadInputs();
   const resolution = resolvePriceVersions(inputs.priceVersions, inputs.aliases, inputs.masterRows);
   const statePoints = buildStatePoints(inputs.historyRows, resolution.map);
-  const episodesBase = buildPriceEpisodes(statePoints);
+  const episodesBase = applyCommercialRetirements(buildPriceEpisodes(statePoints), inputs.successors, statePoints);
   const vinAssignment = assignVehiclesToEpisodes(inputs.vehicleRows, episodesBase);
   const episodes = addEpisodeVinAggregates(episodesBase, vinAssignment.assignments);
   const result = diagnostic(resolution, statePoints, episodes, vinAssignment, dryRun);
