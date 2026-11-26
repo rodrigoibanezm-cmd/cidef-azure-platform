@@ -45,9 +45,9 @@ jobs:
               WHERE (to_jsonb(t)->>'nfactura') = ANY($1::text[])
               ORDER BY to_jsonb(t)->>'snapshot_date' DESC NULLS LAST LIMIT 100`,[invoices]);
             console.log(JSON.stringify({section:'credit_notes_by_invoice',invoice_count:invoices.length,rows:notes.rows}));
-            const inventory=await c.query(`SELECT vin,stock_number, to_jsonb(v) AS row FROM vehiculo_canonico v
+            const inventory=await c.query(`SELECT vin,to_jsonb(v) AS row FROM vehiculo_canonico v
               WHERE upper(btrim(vin))=ANY($1::text[]) LIMIT 5`,[vins]);
-            console.log(JSON.stringify({section:'inventory_canonical',rows:inventory.rows.map(x=>({vin:x.vin,stock_number:x.stock_number,disponible:x.row.disponible,vigente:x.row.vigente}))}));
+            console.log(JSON.stringify({section:'inventory_canonical',rows:inventory.rows.map(x=>({vin:x.vin,stock_number:x.row.stock_number??x.row.numero_stock??null,disponible:x.row.disponible,vigente:x.row.vigente}))}));
             const ledger=await c.query(`SELECT source_date::text AS source_date,completed_at,
               result->'sources'->'ventas_raw'->>'status' AS sales_status,
               result->'sources'->'notas_credito_raw'->>'status' AS credit_notes_status,
