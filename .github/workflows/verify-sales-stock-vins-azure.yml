@@ -1,0 +1,44 @@
+name: Verify VIN stock and sold flags Azure (read-only)
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/verify-sales-stock-vins-azure.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 8
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund pg@8.16.3
+      - name: Inspect current inventory, canonical sold status and derived stages
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const vins=['LVAV2AVB8TE322187','LVAV2JVB4TE322929'];
+          const c=new pg.Client({connectionString:process.env.AZURE_DATABASE_URL,connectionTimeoutMillis:12000,statement_timeout:30000,application_name:'read-only-vin-status'});
+          try{
+            await c.connect();await c.query('BEGIN READ ONLY');
+            const {rows}=await c.query(`SELECT upper(btrim(v.vin_chasis)) vin,
+              v.vigente,v.etapa,v.esta_reservado,v.numero_factura AS stock_invoice,
+              v.fecha_factura AS stock_invoice_date,
+              c.vendido,c.numero_factura AS canonical_invoice,c.fecha_venta_reconocida::text AS recognized_date
+              FROM vehiculos_raw v LEFT JOIN vehiculo_canonico c ON c.vin=upper(btrim(v.vin_chasis))
+              WHERE upper(btrim(v.vin_chasis))=ANY($1::text[])`,[vins]);
+            console.log(JSON.stringify({section:'current_stock_and_sales',rows}));
+            const {rows:stages}=await c.query(`SELECT source_date::text date,stage,status,completed_at
+              FROM sales_derived_refresh_stages WHERE source_date >= DATE '2026-11-25'
+              ORDER BY completed_at DESC NULLS LAST LIMIT 15`);
+            console.log(JSON.stringify({section:'derived_stage_history',rows:stages}));
+            await c.query('ROLLBACK');
+          }catch(e){console.error(JSON.stringify({error:e.message,code:e.code}));process.exitCode=1}
+          finally{await c.end().catch(()=>{})}
+          NODE
