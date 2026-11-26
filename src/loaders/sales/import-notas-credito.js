@@ -1,9 +1,8 @@
 // Adapted from cidef-data-loader; only Azure I/O changes.
 import XLSX from 'xlsx';
-import { findDailyXlsx, downloadBlobObject, blobSource } from './source-io.js';
+import { sourceContext, downloadBlobObject, blobSource } from './source-io.js';
 import { appendTableData, queryDb } from './db.js';
 
-const DEFAULT_FILE_PREFIX = 'ventas/NC_DFM_';
 const SHEET_NAME = 'Datos';
 const TABLE_NAME = 'notas_credito_raw';
 
@@ -74,10 +73,8 @@ export function parseCreditNoteSnapshot(buffer, sheetName = SHEET_NAME) {
   };
 }
 
-export async function run() {
+async function loadCreditNoteFile(file) {
   const startedAt = Date.now();
-  const filePrefix = DEFAULT_FILE_PREFIX;
-  const file = await findDailyXlsx(filePrefix);
   const buffer = await downloadBlobObject(file.Key);
   const parsed = parseCreditNoteSnapshot(buffer);
   const snapshotDate = snapshotDateFromKey(file.Key);
@@ -141,5 +138,16 @@ export async function run() {
     sourceEtag: sourceEtag || null,
     batchSize: result.batchSize,
     elapsedMs: Date.now() - startedAt,
+  };
+}
+
+export async function run() {
+  const files = sourceContext().files.filter(file => file.prefix.startsWith('ventas/NC_'));
+  if (!files.length) throw new Error('Missing daily credit-note sources');
+  const results = [];
+  for (const file of files) results.push(await loadCreditNoteFile(file));
+  return results.length === 1 ? results[0] : {
+    table: TABLE_NAME, status: 'LOADED', strategy: 'MULTI_SOURCE_APPEND_ONLY',
+    sources: results, rowsFinal: results.reduce((sum, result) => sum + result.rowsFinal, 0),
   };
 }
