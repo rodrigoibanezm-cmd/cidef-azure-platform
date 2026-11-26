@@ -1,0 +1,57 @@
+name: Diagnose Forum snapshot cache in Azure (read-only)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund pg@8.16.3
+      - name: Inspect persisted Forum cache (no writes)
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+        run: |
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const db=new pg.Client({connectionString:process.env.AZURE_DATABASE_URL,ssl:{rejectUnauthorized:false},connectionTimeoutMillis:10000,statement_timeout:90000});
+          try {
+            await db.connect();
+            await db.query('BEGIN TRANSACTION READ ONLY');
+            for(const [label,sql] of Object.entries({
+              summary:`SELECT dimension,network,count(*)::int rows,
+                count(*) FILTER (WHERE payload ? 'refresh')::int cache_entries,
+                count(*) FILTER (WHERE payload->'refresh'->>'version'='forum.incremental.v1')::int v1_entries,
+                count(*) FILTER (WHERE nullif(payload->'refresh'->>'engine','') IS NOT NULL)::int engine_entries,
+                count(DISTINCT payload->'refresh'->>'engine')::int engines,
+                min(updated_at)::text oldest_update,max(updated_at)::text newest_update
+                FROM public.forum_ventas_snapshot_v01 GROUP BY dimension,network ORDER BY dimension,network`,
+              historical_bundles:`SELECT period, network, left(coalesce(payload->'refresh'->>'engine',''),16) engine_prefix,
+                payload->'refresh'->>'version' cache_version,
+                left(coalesce(payload->'refresh'->>'content_hash',''),16) content_hash_prefix,
+                left(coalesce(payload->'refresh'->>'bundle_signature',''),16) bundle_signature_prefix,
+                generation_id::text generation_id,updated_at::text updated_at
+                FROM public.forum_ventas_snapshot_v01
+                WHERE dimension='BUNDLE' AND period LIKE '2026-%'
+                ORDER BY network,period`,
+              latest_status:`SELECT period,network,dimension,
+                payload->>'status' status,
+                payload->>'error' error,
+                payload->>'run_id' run_id,
+                payload->>'source_signature' source_signature,
+                updated_at::text updated_at
+                FROM public.forum_ventas_snapshot_v01
+                WHERE dimension='STATUS' ORDER BY updated_at DESC LIMIT 5`
+            })){
+              const result=await db.query(sql);
+              console.log(JSON.stringify({section:label,rows:result.rows}));
+            }
+            await db.query('ROLLBACK');
+          } finally {await db.end().catch(()=>{});}
+          NODE
