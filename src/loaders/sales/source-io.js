@@ -42,23 +42,7 @@ export async function inspectDay(container, date) {
     files.push({ Key: key, ETag: properties.etag, LastModified: properties.lastModified,
       size: properties.contentLength, prefix });
   }
-  // Include every additional daily credit-note workbook available in the same
-  // SALES batch. The baseline NC_DFM_ source remains mandatory above.
-  if (typeof container.listBlobsFlat === 'function') {
-    const dateSuffix = date.replaceAll('-', '_') + '.xlsx';
-    for await (const blob of container.listBlobsFlat({ prefix: 'ventas/NC_' })) {
-      if (!blob.name.startsWith('ventas/NC_') || !blob.name.endsWith(dateSuffix) ||
-          !/^ventas\/NC_[A-Za-z0-9_-]+_\d{4}_\d{2}_\d{2}\.xlsx$/i.test(blob.name) ||
-          files.some(file => file.Key === blob.name)) continue;
-      const properties = await container.getBlobClient(blob.name).getProperties();
-      if (!properties.etag || !properties.contentLength)
-        throw new Error('Empty/unversioned SALES credit-note source: ' + blob.name);
-      files.push({ Key: blob.name, ETag: properties.etag,
-        LastModified: properties.lastModified, size: properties.contentLength,
-        prefix: blob.name.slice(0, -dateSuffix.length) });
-    }
-  }
-  return files.sort((a,b) => a.Key.localeCompare(b.Key));
+  return files;
 }
 
 export async function findDailyXlsx(prefix) {
