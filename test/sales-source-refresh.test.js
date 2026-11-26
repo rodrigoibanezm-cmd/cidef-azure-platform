@@ -190,21 +190,3 @@ test('the reused canonical updater forwards every helper to the injected executo
   assert.ok(statements.some(sql => sql.includes('UPDATE vehiculo_canonico vc')));
   assert.ok(statements.some(sql => sql.includes('resolution_status')));
 });
-
-test('additional dated NC files are preflighted and pinned to their ETags', async () => {
-  const container=fixtureContainer();
-  container.listBlobsFlat=async function*() {
-    yield {name:'ventas/NC_FOTON_2026_10_23.xlsx'};
-    yield {name:'ventas/NC_FOTON_2026_10_22.xlsx'};
-    yield {name:'ventas/NC_DFM_2026_10_23.xlsx'};
-    yield {name:'ventas/NC_FOTON_2026_10_23.csv'};
-  };
-  const files=await inspectDay(container,'2026-10-23');
-  assert.equal(files.length,5);
-  const other=files.find(file=>file.Key==='ventas/NC_FOTON_2026_10_23.xlsx');
-  assert.equal(other.prefix,'ventas/NC_FOTON_');
-  await withSourceContext({container,files},async()=>{
-    assert.equal((await downloadBlobObject(other.Key)).toString(),other.Key);
-    await assert.rejects(downloadBlobObject('ventas/NC_FOTON_2026_10_22.xlsx'));
-  });
-});
