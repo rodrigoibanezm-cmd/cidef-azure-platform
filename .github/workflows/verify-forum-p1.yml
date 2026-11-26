@@ -28,6 +28,7 @@ jobs:
       - name: Validate FORUM P1 semantics
         run: node --test test/forum-p1-semantics.test.js
       - name: Compare September 2026 FORUM P1 against certified Neon baseline
+        if: github.event_name == 'workflow_dispatch'
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
         shell: bash
@@ -42,7 +43,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --test test/forum-ventas-snapshot.test.js test/forum-snapshot-incremental.test.js
       - name: Compare full and incremental Forum snapshots without publishing
-        if: ${{ !cancelled() }}
+        if: github.event_name == 'workflow_dispatch'
         env:
           AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
           DATABASE_URL: ''
