@@ -1,0 +1,74 @@
+name: Reconcile SALES canonical from current stock XLS
+on:
+  workflow_dispatch:
+    inputs:
+      cancelled_vin:
+        description: "VIN returned to available stock, for validation only"
+        required: true
+        default: "LVAV2AVB8TE322187"
+        type: string
+      replacement_vin:
+        description: "Replacement VIN, for validation only"
+        required: true
+        default: "LVAV2JVB4TE322929"
+        type: string
+permissions:
+  contents: read
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    environment: Production
+    timeout-minutes: 15
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+      CANCELLED_VIN: ${{ inputs.cancelled_vin }}
+      REPLACEMENT_VIN: ${{ inputs.replacement_vin }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Recalculate canonical and validate both VINs atomically (no Forum)
+        run: |
+          node --input-type=module <<'NODE'
+          import {getAzurePool,closeAzurePool} from './lib/azure-postgres.js';
+          import {refreshVehiculoCanonicoV01} from './lib/canonical/refresh-vehiculo-canonico-v01.js';
+          const vins=[process.env.CANCELLED_VIN,process.env.REPLACEMENT_VIN].map(s=>String(s||'').trim().toUpperCase());
+          if(vins.some(v=>!/^[A-HJ-NPR-Z0-9]{17}$/.test(v))||vins[0]===vins[1])throw Error('INVALID_VINS');
+          const pool=getAzurePool();
+          const client=await pool.connect();
+          const lock='cidef_ventas_raw_neon_azure_sync';
+          let locked=false,started=false;
+          const execute=(sql,params=[])=>client.query(sql,params).then(r=>r.rows);
+          try {
+            const {rows:[r]}=await client.query('SELECT pg_try_advisory_lock(hashtext($1)) ok',[lock]);
+            if(!r.ok)throw Error('Another SALES update is running');
+            locked=true;
+            await client.query('BEGIN');started=true;
+            await client.query("SET LOCAL statement_timeout = '600s'");
+            const preview=await refreshVehiculoCanonicoV01({dry_run:true,execute});
+            if(Number(preview.before.canonical_extra_before)!==0)throw Error('Canonical preflight would delete VINs');
+            const result=await refreshVehiculoCanonicoV01({dry_run:false,execute});
+            if(Number(result.base.rows_deleted)!==0)throw Error('Canonical deleted VINs');
+            const {rows}=await client.query(`SELECT c.vin,c.vendido, v.vigente,v.esta_reservado,
+              v.numero_factura, v.fecha_factura
+              FROM vehiculo_canonico c JOIN vehiculos_raw v
+                ON upper(btrim(v.vin_chasis))=c.vin
+              WHERE c.vin=ANY($1::text[])`,[vins]);
+            console.log(JSON.stringify({section:'validated_sales_canonical',rows}));
+            const cancelled=rows.find(x=>x.vin===vins[0]);
+            const replacement=rows.find(x=>x.vin===vins[1]);
+            if(!cancelled||!replacement||cancelled.vendido!==false||replacement.vendido!==true)
+              throw Error('CANONICAL_STOCK_SALES_VALIDATION_FAILED; changes rolled back');
+            await client.query('COMMIT');started=false;
+            console.log(JSON.stringify({status:'COMMITTED',rows_updated:result.base.rows_upserted,validation:'PASS'}));
+          }catch(e){
+            if(started)await client.query('ROLLBACK').catch(()=>{});
+            console.error(JSON.stringify({status:'FAILED',error:e.message}));
+            process.exitCode=1;
+          }finally{
+            if(locked)await client.query('SELECT pg_advisory_unlock(hashtext($1))',[lock]).catch(()=>{});
+            client.release();await closeAzurePool();
+          }
+          NODE
