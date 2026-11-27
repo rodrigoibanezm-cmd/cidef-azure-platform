@@ -13,7 +13,7 @@ import { engineSignature } from '../lib/forum-snapshot/incremental.js';
 
 const LOCK = 'cidef_ventas_raw_neon_azure_sync';
 const INPUTS = ['vehiculos_raw', 'ventas_raw', 'notas_venta_raw',
-  'producto_aliases_v01', 'dealers_master', 'dealer_aliases',
+  'producto_aliases_v01', 'dealers_master', 'dealer_groups', 'dealer_aliases',
   'sucursales_master', 'sucursal_aliases'];
 const emit = value => console.log(JSON.stringify(value));
 const FORUM_INPUTS = ['forum_funnel_raw', 'ventas_raw', 'vehiculos_raw',
@@ -179,7 +179,7 @@ export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
           AS latest_vehicle_rvm_sync`);
       return { ...synced, ...dates };
     });
-    // The canonical processor operates on the entire current RAW state; it cannot replay an old day.
+    // Current-state canonical may use a verified VIN scope; legacy/full remains the safe fallback.
     // A change in current SALES recognition must invalidate the canonical stage
     // even when all daily XLS inputs are byte-identical.
     const canonicalCodeSignature = createHash('sha256');
