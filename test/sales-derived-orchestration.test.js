@@ -14,7 +14,7 @@ test('derived runner reuses certified publishers without reloading RAW', async (
   assert.match(runner, /publishCurrentDealerSellin\(month, cutoff, pool, client\)/);
   assert.match(runner, /refresh-forum-ventas-snapshot-azure\.js/);
   assert.match(runner, /source_date,stage,input_signature/);
-  assert.ok(runner.indexOf("'vehiculos_raw_rvm_sync'") < runner.indexOf("'vehiculo_canonico'"));
+  assert.ok(runner.indexOf("runStage(client, cutoff, 'vehiculos_raw_rvm_sync'") < runner.indexOf("runStage(client, cutoff, 'vehiculo_canonico'"));
   assert.match(runner, /syncVehiculosFromRvm\(\(text, values\) => sql\(client, text, values\)/);
   assert.match(runner, /onlyChanged: true/);
   assert.match(runner, /latest_rvm_ingestion/);
