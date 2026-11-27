@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/validate-sales-canonical-parity.yml'
       - 'scripts/validate-sales-canonical-parity.mjs'
+      - 'lib/canonical/refresh-vehiculo-canonico-v01.js'
 
 permissions:
   contents: read
@@ -38,6 +39,7 @@ jobs:
       - name: Validate script and install existing dependencies
         run: |
           node --check scripts/validate-sales-canonical-parity.mjs
+          node --check lib/canonical/refresh-vehiculo-canonico-v01.js
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund
       - name: Copy required SALES tables from Azure read-only
         shell: bash
