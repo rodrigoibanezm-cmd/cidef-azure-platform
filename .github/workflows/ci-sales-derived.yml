@@ -10,6 +10,7 @@ on:
       - 'test/sales-source-refresh.test.js'
       - 'src/loaders/sales/sync-vehiculos-rvm.js'
       - 'test/sales-derived-orchestration.test.js'
+      - 'test/sales-incremental-postgres.test.js'
       - '.github/workflows/ci-sales-derived.yml'
   workflow_dispatch:
 permissions:
@@ -18,6 +19,18 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fixture
+          POSTGRES_PASSWORD: fixture
+          POSTGRES_DB: fixture
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fixture -d fixture"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - name: Verificar sintaxis y ausencia de cargas RAW en el ejecutor
@@ -35,6 +48,8 @@ jobs:
       - name: Dependencias existentes para pruebas de módulos
         run: npm install --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Prueba focalizada de orquestación
-        run: node --test test/sales-derived-orchestration.test.js test/sales-source-refresh.test.js
+        env:
+          PG_TEST_DATABASE_URL: postgresql://fixture:fixture@localhost:5432/fixture
+        run: node --test test/sales-derived-orchestration.test.js test/sales-source-refresh.test.js test/sales-incremental-postgres.test.js
       - name: Construir imagen local sin publicar ni ejecutar en Azure
         run: docker build -f Dockerfile.sales-refresh -t cidef-sales-derived-ci .
