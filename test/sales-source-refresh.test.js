@@ -209,3 +209,26 @@ test('canonical base UPSERT writes only changed values and preserves source meta
   assert.match(predicate, /RETURNING vin/);
   assert.ok(!predicate.includes('canonicalized_at) IS DISTINCT FROM'));
 });
+
+test('canonical derived writes skip unchanged sale, resolution and recognized-date data', async () => {
+  const statements = [];
+  await refreshVehiculoCanonicoV01({ dry_run: false, execute: async sql => {
+    statements.push(sql);
+    if (sql.includes('AS duplicate_valid_rows')) return [{ duplicate_valid_rows: 0, unrecoverable_etapa_rows: 0 }];
+    if (sql.includes('AS valid_raw_vins')) return [{ valid_raw_vins: 0, canonical_rows: 0 }];
+    if (sql.includes('AS integridad_tienda_fallida')) return [{ integridad_tienda_fallida: 0, integridad_dealer_fallida: 0 }];
+    if (sql.includes('SELECT id, nro_vin_chasis')) return [];
+    return [{}];
+  }});
+  const classification = statements.find(sql => sql.includes('FROM final_resolution fr\n     WHERE fr.vin = vc.vin'));
+  assert.ok(classification);
+  assert.match(classification, /vc\.vendido, vc\.canal_salida, vc\.es_tienda_propia/);
+  assert.match(classification, /IS DISTINCT FROM/);
+  const resolution = statements.find(sql => sql.includes('SET resolution_status = CASE'));
+  assert.ok(resolution);
+  assert.match(resolution, /WHERE resolution_status IS DISTINCT FROM CASE/);
+  const dates = statements.find(sql => sql.includes('AS vin_con_fecha_reconocida'));
+  assert.ok(dates);
+  assert.match(dates, /vc\.fecha_venta_reconocida IS DISTINCT FROM expected\.expected_fecha/);
+  assert.match(dates, /FROM expected\s+LEFT JOIN updated USING \(vehiculo_id\)/);
+});
