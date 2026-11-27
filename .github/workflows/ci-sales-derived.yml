@@ -6,6 +6,7 @@ on:
       - 'Dockerfile.sales-refresh'
       - 'src/loaders/sales/refresh.js'
       - 'lib/canonical/refresh-vehiculo-canonico-v01.js'
+      - 'lib/canonical/vehiculo-salida-v01.js'
       - 'test/sales-source-refresh.test.js'
       - 'src/loaders/sales/sync-vehiculos-rvm.js'
       - 'test/sales-derived-orchestration.test.js'
