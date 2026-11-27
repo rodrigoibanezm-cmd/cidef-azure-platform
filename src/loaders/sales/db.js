@@ -65,6 +65,42 @@ export async function commitTableSnapshot(snapshot) {
       SELECT ${names.map(n => `s.${quoteIdent(n)}::${types.get(n)}`).join(',')}
       FROM ${quoteIdent(snapshot.staging)} AS s
       WHERE NOT EXISTS (SELECT 1 FROM public.ventas_raw AS t WHERE t.id::text = s.id)`);
+  } else if (snapshot.tableName === 'vehiculos_raw' &&
+             names.includes('vin_chasis') && target.every(field => names.includes(field.name))) {
+    // The staging inventory already includes historical VINs and preserved RVM columns.
+    // If VIN identities are ambiguous, use the existing full-snapshot semantics.
+    const stage = quoteIdent(snapshot.staging);
+    const targetTable = 'public.vehiculos_raw';
+    const [integrity] = await queryDb(`
+      SELECT
+        (SELECT count(*)-count(DISTINCT upper(btrim(vin_chasis)))
+           FROM ${stage} WHERE nullif(btrim(vin_chasis),'') IS NOT NULL) AS stage_duplicates,
+        (SELECT count(*)-count(DISTINCT upper(btrim(vin_chasis)))
+           FROM ${targetTable} WHERE nullif(btrim(vin_chasis),'') IS NOT NULL) AS target_duplicates
+    `);
+    if (Number(integrity.stage_duplicates) || Number(integrity.target_duplicates)) {
+      await queryDb(`DELETE FROM ${targetTable}`);
+      await queryDb(`INSERT INTO ${targetTable} (${names.map(quoteIdent).join(',')})
+        SELECT ${names.map(n => `s.${quoteIdent(n)}::${types.get(n)}`).join(',')} FROM ${stage} s`);
+    } else {
+      const mutable = names.map(n => `${quoteIdent(n)} = s.${quoteIdent(n)}::${types.get(n)}`).join(',');
+      const changed = names.map(n => `t.${quoteIdent(n)} IS DISTINCT FROM s.${quoteIdent(n)}::${types.get(n)}`).join(' OR ');
+      await queryDb(`UPDATE ${targetTable} t SET ${mutable}
+        FROM ${stage} s
+        WHERE nullif(btrim(s.vin_chasis),'') IS NOT NULL
+          AND upper(btrim(t.vin_chasis)) = upper(btrim(s.vin_chasis))
+          AND (${changed})`);
+      await queryDb(`INSERT INTO ${targetTable} (${names.map(quoteIdent).join(',')})
+        SELECT ${names.map(n => `s.${quoteIdent(n)}::${types.get(n)}`).join(',')}
+        FROM ${stage} s WHERE nullif(btrim(s.vin_chasis),'') IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM ${targetTable} t
+            WHERE upper(btrim(t.vin_chasis)) = upper(btrim(s.vin_chasis)))`);
+      // Rows without a VIN cannot be matched; preserve existing snapshot behavior for them.
+      await queryDb(`DELETE FROM ${targetTable} WHERE nullif(btrim(vin_chasis),'') IS NULL`);
+      await queryDb(`INSERT INTO ${targetTable} (${names.map(quoteIdent).join(',')})
+        SELECT ${names.map(n => `s.${quoteIdent(n)}::${types.get(n)}`).join(',')}
+        FROM ${stage} s WHERE nullif(btrim(s.vin_chasis),'') IS NULL`);
+    }
   } else {
     // Existing snapshot semantics remain unchanged for non-SALES tables.
     await queryDb(`DELETE FROM public.${quoteIdent(snapshot.tableName)}`);
