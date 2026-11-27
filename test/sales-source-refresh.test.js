@@ -38,7 +38,7 @@ function fakeDatabase({ locked = true } = {}) {
         if (result) rows = [{ result }];
       }
       if (sql.includes('max(source_date)')) rows = [{ date: [...journal.values()].map(r => r.date).sort().at(-1) || null }];
-      if (sql.includes('AS changed_vins') && sql.includes('sales_raw_vin_before'))
+      if (sql.includes('changed_vins') && sql.includes('sales_raw_vin_before'))
         rows = [{ changed_vins: ['LVAV2JVB4TE322929'], requires_full: false }];
       if (sql.includes('INSERT INTO public.sales_refresh_runs')) {
         pending = { key: params[0] + ':' + params[1], result: JSON.parse(params[4]) };
@@ -298,7 +298,7 @@ test('RAW-only journal records changed VINs from four sources transactionally', 
   const write = db.calls.find(([statement]) => statement.includes('INSERT INTO public.sales_raw_refresh_runs'));
   assert.ok(write);
   assert.deepEqual(JSON.parse(write[1][4]).rawDelta.changedVins, ['LVAV2JVB4TE322929']);
-  assert.ok(sql.indexOf('COMMIT') > sql.findIndex(statement => statement.includes('AS changed_vins')));
+  assert.ok(sql.indexOf('COMMIT') > sql.findIndex(statement => statement.includes('changed_vins')));
 });
 
 test('unkeyed RAW modifications require full canonical fallback', async () => {
