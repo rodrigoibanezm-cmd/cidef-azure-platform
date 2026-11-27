@@ -39,7 +39,7 @@ function fakeDatabase({ locked = true } = {}) {
       }
       if (sql.includes('max(source_date)')) rows = [{ date: [...journal.values()].map(r => r.date).sort().at(-1) || null }];
       if (sql.includes('changed_vins') && sql.includes('sales_raw_vin_before'))
-        rows = [{ changed_vins: ['LVAV2JVB4TE322929'], requires_full: false, raw_state_signature: 'statehash' }];
+        rows = [{ changed_vins: ['LVAV2JVB4TE322929'], requires_full: false, raw_state_signature: 'statehash', raw_before_signature: 'beforehash' }];
       if (sql.includes('INSERT INTO public.sales_refresh_runs')) {
         pending = { key: params[0] + ':' + params[1], result: JSON.parse(params[4]) };
         rows = [{ changed_vins: 2 }];
@@ -289,7 +289,7 @@ test('RAW-only journal records changed VINs from four sources transactionally', 
     pool: db.pool, container: fixtureContainer(), dates: ['2026-10-23'],
     loaders: fixtureLoaders([]),
   });
-  assert.deepEqual(result[0].rawDelta, { changedVins: ['LVAV2JVB4TE322929'], requiresFull: false, rawStateSignature: 'statehash' });
+  assert.deepEqual(result[0].rawDelta, { changedVins: ['LVAV2JVB4TE322929'], requiresFull: false, rawStateSignature: 'statehash', rawBeforeSignature: 'beforehash' });
   const sql = db.calls.map(([statement]) => statement);
   assert.equal(sql.filter(statement => statement.includes('CREATE TEMP TABLE sales_raw_vin_before')).length, 1);
   assert.ok(sql.some(statement => statement.includes('FROM public.ventas_raw v')));
@@ -304,9 +304,9 @@ test('RAW-only journal records changed VINs from four sources transactionally', 
 test('unkeyed RAW modifications require full canonical fallback', async () => {
   const result = await captureRawVinDelta(async sql => {
     assert.match(sql, /length\(vin\)<>17/);
-    return [{ changed_vins: [], requires_full: true, raw_state_signature: 'statehash' }];
+    return [{ changed_vins: [], requires_full: true, raw_state_signature: 'statehash', raw_before_signature: 'beforehash' }];
   });
-  assert.deepEqual(result, { changedVins: [], requiresFull: true, rawStateSignature: 'statehash' });
+  assert.deepEqual(result, { changedVins: [], requiresFull: true, rawStateSignature: 'statehash', rawBeforeSignature: 'beforehash' });
   await assert.rejects(captureRawVinDelta(async () => []), /delta calculation failed/);
 });
 
