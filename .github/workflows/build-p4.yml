@@ -7,6 +7,10 @@ on:
         description: Deploy verified image to existing P4 service
         type: boolean
         default: false
+      verify_only:
+        description: Verify existing deployed MCP without building or updating Azure
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,6 +41,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build and push P4 image
+        if: '!inputs.verify_only'
         shell: bash
         run: |
           set -euo pipefail
@@ -46,7 +51,7 @@ jobs:
           docker push "$IMAGE"
           echo "Published $IMAGE"
       - name: Deploy existing P4 and verify MCP without model calls
-        if: inputs.deploy
+        if: inputs.deploy || inputs.verify_only
         shell: bash
         run: |
           set -euo pipefail
@@ -56,7 +61,11 @@ jobs:
           az containerapp show -g "$RG" -n "$APP" --query name -o tsv
           FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           test -n "$FQDN"
-          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "P4_PUBLIC_HOST=$FQDN" -o none
+          if [[ "${{ inputs.verify_only }}" != "true" ]]; then
+            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "P4_PUBLIC_HOST=$FQDN" -o none
+          fi
+          az containerapp show -g "$RG" -n "$APP" --query "{image:properties.template.containers[0].image,revision:properties.latestReadyRevisionName,state:properties.provisioningState}" -o json
+          echo "MCP: https://$FQDN/mcp"
           REF=$(az containerapp show -g "$RG" -n "$APP" --query "properties.template.containers[0].env[?name=='P4_API_TOKEN'].secretRef | [0]" -o tsv)
           test -n "$REF"
           TOKEN=$(az containerapp secret show -g "$RG" -n "$APP" --secret-name "$REF" --query value -o tsv)

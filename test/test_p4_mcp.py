@@ -46,3 +46,20 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(client.post("/mcp",json=body,headers={**headers,"Host":"untrusted.example"}).status_code,421)
             self.assertEqual(result.status_code,200)
             self.assertEqual([t["name"] for t in result.json()["result"]["tools"]],["commercial_analyze"])
+            from mcp.types import CallToolResult
+            from monthly_close_agent.evidence import decode_trace
+            init = client.post("/mcp", headers=headers, json={
+                "jsonrpc":"2.0","id":2,"method":"initialize","params":{
+                    "protocolVersion":"2025-03-26","capabilities":{},
+                    "clientInfo":{"name":"p4-test","version":"1"}}})
+            self.assertEqual(init.status_code,200)
+            headers["MCP-Protocol-Version"] = init.json()["result"]["protocolVersion"]
+            initialized = client.post("/mcp",headers=headers,json={
+                "jsonrpc":"2.0","method":"notifications/initialized"})
+            self.assertEqual(initialized.status_code,202)
+            direct = client.post("/mcp",headers=headers,json={
+                "jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+                    "name":"commercial_analyze","arguments":{
+                        "question":"ventas","route":"DIRECT_MOTOR","research_goal":""}}})
+            self.assertEqual(direct.status_code,200)
+            self.assertEqual(decode_trace(CallToolResult.model_validate(direct.json()["result"]))["status"],"DIRECT_MOTOR")
