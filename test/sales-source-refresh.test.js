@@ -239,3 +239,22 @@ test('canonical derived writes skip unchanged sale, resolution and recognized-da
     else process.env.AZURE_DATABASE_URL = previousAzureUrl;
   }
 });
+
+test('sale classification preview runs only for dry-run, not the canonical write', async () => {
+  const { refreshVehiculoSalidaV01 } = await import('../lib/canonical/vehiculo-salida-v01.js');
+  for (const dry_run of [true, false]) {
+    const statements = [];
+    const result = await refreshVehiculoSalidaV01({ dry_run, execute: async sql => {
+      statements.push(sql);
+      if (sql.includes('SELECT id, nro_vin_chasis')) return [];
+      if (sql.includes('AS integridad_tienda_fallida'))
+        return [{ integridad_tienda_fallida: 0, integridad_dealer_fallida: 0 }];
+      return [{}];
+    } });
+    assert.equal(result.dry_run, dry_run);
+    assert.equal(statements.filter(sql => sql.includes('FROM final_resolution\n')).length,
+      1, 'resolve sale classification only once per invocation');
+    assert.equal(statements.filter(sql => sql.includes('FROM final_resolution\n') && sql.includes('UPDATE vehiculo_canonico vc')).length,
+      dry_run ? 0 : 1);
+  }
+});
