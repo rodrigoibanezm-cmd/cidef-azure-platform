@@ -309,3 +309,39 @@ test('unkeyed RAW modifications require full canonical fallback', async () => {
   assert.deepEqual(result, { changedVins: [], requiresFull: true });
   await assert.rejects(captureRawVinDelta(async () => []), /delta calculation failed/);
 });
+
+test('scoped canonical refresh applies the same VIN list to base, channel, status and dates', async () => {
+  const oldUrl = process.env.AZURE_DATABASE_URL;
+  process.env.AZURE_DATABASE_URL = 'postgresql://test:placeholder@example.postgres.database.azure.com/test';
+  const affectedVins = ['LVAV2JVB4TE322929', 'LVAV2AVB8TE322187'];
+  const statements = [];
+  try {
+    const execute = async (sql, params = []) => {
+      statements.push({ sql, params });
+      if (sql.includes('AS duplicate_valid_rows')) return [{ duplicate_valid_rows: 0, unrecoverable_etapa_rows: 0 }];
+      if (sql.includes('AS valid_raw_vins')) return [{ valid_raw_vins: 0, canonical_rows: 0 }];
+      if (sql.includes('AS integridad_tienda_fallida')) return [{ integridad_tienda_fallida: 0, integridad_dealer_fallida: 0 }];
+      if (sql.includes('id, nro_operacion, razon_social')) return [];
+      return [{}];
+    };
+    const result = await refreshVehiculoCanonicoV01({ execute, dry_run: false, affectedVins });
+    assert.equal(result.strategy, 'INCREMENTAL_CURRENT_STATE');
+    const base = statements.find(({sql}) => sql.includes('INSERT INTO public.vehiculo_canonico AS vc'));
+    assert.deepEqual(base.params, [affectedVins]);
+    assert.match(base.sql, /\$1::text\[\] IS NULL OR upper\(btrim\(vin_chasis\)\)/);
+    const channel = statements.find(({sql}) => sql.includes('FROM final_resolution fr'));
+    assert.deepEqual(channel.params[1], affectedVins);
+    assert.match(channel.sql, /FROM scoped_vehicles vc/);
+    const status = statements.find(({sql}) => sql.includes('SET resolution_status = CASE'));
+    assert.deepEqual(status.params, [affectedVins]);
+    const dates = statements.find(({sql}) => sql.includes('AS vin_con_fecha_reconocida'));
+    assert.deepEqual(dates.params[3], affectedVins);
+    assert.match(dates.sql, /vc\.vin = ANY\(\$4::text\[\]\)/);
+    assert.ok(statements.some(({sql}) => sql.includes('AS valid_raw_vins')));
+    await assert.rejects(refreshVehiculoCanonicoV01({ dry_run:true, execute,
+      affectedVins:['unverified'] }), /INVALID_CANONICAL_AFFECTED_VINS/);
+  } finally {
+    if (oldUrl === undefined) delete process.env.AZURE_DATABASE_URL;
+    else process.env.AZURE_DATABASE_URL = oldUrl;
+  }
+});
