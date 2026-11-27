@@ -119,11 +119,13 @@ export async function captureRawVinDelta(execute = queryDb) {
  WHERE b.signature IS DISTINCT FROM c.signature)
  SELECT coalesce(array_agg(DISTINCT vin) FILTER (WHERE length(vin)=17 AND vin ~ '^[A-HJ-NPR-Z0-9]{17}$'), ARRAY[]::text[]) changed_vins,
  coalesce(bool_or(length(vin)<>17 OR vin !~ '^[A-HJ-NPR-Z0-9]{17}$'),false) requires_full,
- (SELECT md5(coalesce(string_agg(source||':'||vin||':'||signature, '' ORDER BY source,vin),'')) FROM current_state) raw_state_signature
+ (SELECT md5(coalesce(string_agg(source||':'||vin||':'||signature, '' ORDER BY source,vin),'')) FROM current_state) raw_state_signature,
+ (SELECT md5(coalesce(string_agg(source||':'||vin||':'||signature, '' ORDER BY source,vin),'')) FROM sales_raw_vin_before) raw_before_signature
  FROM changed`);
- if (!delta || !Array.isArray(delta.changed_vins) || !delta.raw_state_signature) throw new Error('RAW VIN delta calculation failed');
+ if (!delta || !Array.isArray(delta.changed_vins) || !delta.raw_state_signature || !delta.raw_before_signature) throw new Error('RAW VIN delta calculation failed');
  return { changedVins: delta.changed_vins, requiresFull: delta.requires_full === true,
-   rawStateSignature: delta.raw_state_signature };
+   rawStateSignature: delta.raw_state_signature,
+   rawBeforeSignature: delta.raw_before_signature };
 }
 // RAW-only mode deliberately has independent idempotence from full SALES refresh.
 export async function refreshRawDay({ client, container, date, loaders = LOADERS, runId }) {
