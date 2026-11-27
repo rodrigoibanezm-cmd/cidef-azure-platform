@@ -55,7 +55,7 @@ test('vehicle RAW merge changes only mismatched VINs and inserts new VINs', asyn
   assert.match(update,/timestamp without time zone/);
   assert.ok(statements.some(s=>s.startsWith('INSERT INTO public.vehiculos_raw') && s.includes('NOT EXISTS')));
   assert.ok(statements.some(s=>s.includes('DELETE FROM public.vehiculos_raw WHERE nullif(btrim(vin_chasis)')));
-  assert.ok(!statements.some(s=>s.trim()==='DELETE FROM public.vehiculos_raw'));
+  assert.ok(!statements.some(s=>/^DELETE FROM public\\.(?:\"vehiculos_raw\"|vehiculos_raw)$/.test(s.trim())));
 });
 
 test('duplicate or incomplete vehicle snapshots retain the previous safe replacement', async () => {
