@@ -8,7 +8,7 @@ import { refreshVehiculoCanonicoV01 } from '../lib/canonical/refresh-vehiculo-ca
 import { refreshDealerSellout } from '../lib/data-floor/refreshDealerSellout.js';
 import { validDate } from '../src/loaders/sales/source-io.js';
 import { syncVehiculosFromRvm } from '../src/loaders/sales/sync-vehiculos-rvm.js';
-import { publishCurrentDealerSellin } from '../src/loaders/sales/refresh.js';
+import { publishCurrentDealerSellin, RAW_STATE_SIGNATURE_SQL } from '../src/loaders/sales/refresh.js';
 import { engineSignature } from '../lib/forum-snapshot/incremental.js';
 
 const LOCK = 'cidef_ventas_raw_neon_azure_sync';
@@ -69,7 +69,7 @@ async function runStage(client, date, stage, signature, work) {
   [date, stage, signature]);
   if (previous) {
     emit({ date, stage, status: 'SKIPPED', reason: 'UNCHANGED_SIGNATURE', signature });
-    return;
+    return { skipped: true, result: previous.result };
   }
   emit({ date, stage, status: 'RUNNING', signature });
   const started = Date.now();
@@ -86,6 +86,7 @@ async function runStage(client, date, stage, signature, work) {
     await client.query('COMMIT');
     emit({ date, stage, status: 'COMPLETED', signature, elapsed_ms: Date.now()-started,
       result });
+    return { skipped: false, result };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     await sql(client, `INSERT INTO public.sales_derived_refresh_stages
@@ -99,6 +100,42 @@ async function runStage(client, date, stage, signature, work) {
   }
 }
 
+// Only a complete, continuous and unchanged RAW fingerprint chain is safe to scope.
+export async function planCanonicalScope(client, { masterSignature, codeSignature,
+    currentRawSignature, rvmStage }) {
+  const full = reason => ({ affectedVins: null, reason });
+  if (!rvmStage?.skipped && Number(rvmStage?.result?.rows_updated || 0) !== 0)
+    return full('RVM_UPDATED');
+  const [baseline] = await sql(client, `SELECT completed_at, result
+    FROM public.sales_derived_refresh_stages
+    WHERE stage='vehiculo_canonico' AND status='COMPLETED'
+    ORDER BY completed_at DESC LIMIT 1`);
+  if (!baseline?.result?.raw_state_signature ||
+      baseline.result.master_signature !== masterSignature ||
+      baseline.result.code_signature !== codeSignature)
+    return full('NO_COMPATIBLE_BASELINE');
+  const runs = await sql(client, `SELECT result FROM public.sales_raw_refresh_runs
+    WHERE completed_at > $1::timestamptz ORDER BY completed_at, run_id`,
+    [baseline.completed_at]);
+  if (!runs.length) return full('NO_NEW_RAW_CHANGE_SET');
+  let previousHash = baseline.result.raw_state_signature;
+  const changed = new Set();
+  for (const { result } of runs) {
+    const delta = result?.rawDelta;
+    if (!delta || delta.requiresFull !== false || !Array.isArray(delta.changedVins) ||
+        !delta.rawBeforeSignature || !delta.rawStateSignature ||
+        delta.rawBeforeSignature !== previousHash)
+      return full('RAW_CHAIN_NOT_CERTIFIED');
+    for (const vin of delta.changedVins) {
+      if (typeof vin !== 'string' || !/^[A-HJ-NPR-Z0-9]{17}$/.test(vin))
+        return full('INVALID_CHANGED_VIN');
+      changed.add(vin);
+    }
+    previousHash = delta.rawStateSignature;
+  }
+  if (previousHash !== currentRawSignature) return full('RAW_CHANGED_OUTSIDE_LEDGER');
+  return { affectedVins: [...changed].sort(), reason: 'VERIFIED_RAW_DELTA' };
+}
 export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
   if (!Array.isArray(sourceDates) || !sourceDates.length ||
       sourceDates.some(d => !validDate(d)) || new Set(sourceDates).size !== sourceDates.length) {
@@ -128,8 +165,11 @@ export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
       completed_at timestamptz, PRIMARY KEY(source_date,stage,input_signature))`);
     // RAW-only SALES explicitly skips RVM; synchronize lifecycle before canonical.
     // Change-only updates avoid invalidating downstream stages on an unchanged retry.
+    const incrementalEnabled = process.env.SALES_CANONICAL_INCREMENTAL_ENABLED === 'true';
+    const rawBeforeRvm = incrementalEnabled
+      ? (await sql(client, RAW_STATE_SIGNATURE_SQL))[0]?.signature : null;
     const rvmSignature = await fingerprint(client, ['rvm_raw', 'vehiculos_raw']);
-    await runStage(client, cutoff, 'vehiculos_raw_rvm_sync', rvmSignature, async () => {
+    const rvmStage = await runStage(client, cutoff, 'vehiculos_raw_rvm_sync', rvmSignature, async () => {
       const synced = await syncVehiculosFromRvm((text, values) => sql(client, text, values),
         { onlyChanged: true });
       const [dates] = await sql(client, `SELECT
@@ -147,18 +187,45 @@ export async function refreshDerived({ sourceDates, pool = getAzurePool() }) {
       '../lib/ventas/loadVentasRows.js',
       '../lib/canonical/vehiculo-salida-v01.js',
       '../lib/canonical/refresh-vehiculo-canonico-v01.js',
+      '../lib/ventas/resolveVentasRecognition.js',
+      '../lib/ventas/ventasContextUtils.js',
+      '../lib/ventas/parseFechaFactura.js',
     ]) canonicalCodeSignature.update(readFileSync(new URL(path, import.meta.url)));
+    const codeSignature = canonicalCodeSignature.digest('hex');
     const canonicalSignature = createHash('sha256')
       .update(await fingerprint(client, INPUTS))
-      .update(canonicalCodeSignature.digest('hex')).digest('hex');
+      .update(codeSignature).digest('hex');
+    let scope = { affectedVins: null, reason: 'INCREMENTAL_DISABLED' };
+    let masterSignature = null;
+    let rawAfterRvm = null;
+    if (incrementalEnabled) {
+      masterSignature = await fingerprint(client, [
+        'producto_aliases_v01','dealers_master','dealer_aliases',
+        'sucursales_master','sucursal_aliases','dealer_groups',
+      ]);
+      const rvmChanged = !rvmStage.skipped && Number(rvmStage.result?.rows_updated || 0) !== 0;
+      rawAfterRvm = rvmChanged
+        ? (await sql(client, RAW_STATE_SIGNATURE_SQL))[0]?.signature
+        : rawBeforeRvm;
+      if (!rawBeforeRvm || !rawAfterRvm) throw new Error('RAW_STATE_SIGNATURE_MISSING');
+      scope = await planCanonicalScope(client, {
+        masterSignature, codeSignature, currentRawSignature: rawBeforeRvm, rvmStage,
+      });
+    }
+    emit({ date: cutoff, stage: 'canonical_scope', reason: scope.reason,
+      affected_vin_count: scope.affectedVins?.length ?? null });
     await runStage(client, cutoff, 'vehiculo_canonico', canonicalSignature, async () => {
       const execute = (text, values) => sql(client, text, values);
-      const preview = await refreshVehiculoCanonicoV01({ dry_run: true, execute });
+      const affectedVins = scope.affectedVins;
+      const preview = await refreshVehiculoCanonicoV01({ dry_run: true, execute, affectedVins });
       if (Number(preview.before.canonical_extra_before) !== 0)
         throw new Error('Canonical refresh would remove VINs');
-      const result = await refreshVehiculoCanonicoV01({ dry_run: false, execute });
+      const result = await refreshVehiculoCanonicoV01({ dry_run: false, execute, affectedVins });
       if (Number(result.base.rows_deleted) !== 0) throw new Error('Canonical deleted VINs');
-      return { rows_upserted: result.base.rows_upserted, rows_deleted: result.base.rows_deleted };
+      return { rows_upserted: result.base.rows_upserted, rows_deleted: result.base.rows_deleted,
+        strategy: result.strategy, affected_vin_count: affectedVins?.length ?? null,
+        scope_reason: scope.reason, code_signature: codeSignature,
+        master_signature: masterSignature, raw_state_signature: rawAfterRvm };
     });
     const selloutSignature = await fingerprint(client, ['vehiculo_canonico']);
     await runStage(client, cutoff, 'dealer_monthly_sellout_snapshots', selloutSignature,
