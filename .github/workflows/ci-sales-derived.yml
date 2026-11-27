@@ -5,6 +5,8 @@ on:
       - 'scripts/refresh-sales-derived-azure.js'
       - 'Dockerfile.sales-refresh'
       - 'src/loaders/sales/refresh.js'
+      - 'lib/canonical/refresh-vehiculo-canonico-v01.js'
+      - 'test/sales-source-refresh.test.js'
       - 'src/loaders/sales/sync-vehiculos-rvm.js'
       - 'test/sales-derived-orchestration.test.js'
       - '.github/workflows/ci-sales-derived.yml'
@@ -32,6 +34,6 @@ jobs:
       - name: Dependencias existentes para pruebas de módulos
         run: npm install --omit=dev --ignore-scripts --no-audit --no-fund
       - name: Prueba focalizada de orquestación
-        run: node --test test/sales-derived-orchestration.test.js
+        run: node --test test/sales-derived-orchestration.test.js test/sales-source-refresh.test.js
       - name: Construir imagen local sin publicar ni ejecutar en Azure
         run: docker build -f Dockerfile.sales-refresh -t cidef-sales-derived-ci .
