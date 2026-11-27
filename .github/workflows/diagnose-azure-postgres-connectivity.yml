@@ -1,0 +1,62 @@
+name: Diagnose Azure PostgreSQL connectivity (read-only)
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/diagnose-azure-postgres-connectivity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  connectivity:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    environment: Production
+    env:
+      AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: DNS and TCP reachability without exposing secrets
+        run: |
+          python3 - <<'PY'
+          import os, socket
+          from urllib.parse import urlsplit
+          url = urlsplit(os.environ['AZURE_DATABASE_URL'])
+          host = url.hostname
+          port = url.port or 5432
+          print('HOST:', host, 'PORT:', port)
+          try:
+              addresses = socket.getaddrinfo(host,port,type=socket.SOCK_STREAM)
+              print('DNS: OK; IP types:',sorted(set(str(x[0]) for x in addresses)))
+          except Exception as e:
+              print('DNS: FAILED',type(e).__name__,str(e))
+              raise SystemExit(1)
+          for timeout in [3, 8, 15]:
+              try:
+                  with socket.create_connection((host,port),timeout=timeout):
+                      print('TCP: OK')
+                      break
+              except Exception as e:
+                  print('TCP: FAILED',type(e).__name__,str(e))
+          PY
+      - name: PostgreSQL SELECT 1 with 10s connection timeout
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund pg@8.16.3 >/dev/null
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const p=new pg.Pool({connectionString:process.env.AZURE_DATABASE_URL,max:1,connectionTimeoutMillis:10000,ssl:{rejectUnauthorized:false}});
+          try {
+            const start=Date.now();
+            const result=await p.query('SELECT 1 AS ok');
+            console.log(JSON.stringify({postgres:'OK',value:result.rows[0].ok,elapsed_ms:Date.now()-start}));
+          } catch(e) {
+            console.error(JSON.stringify({postgres:'FAILED',type:e.code||e.name,message:e.message}));
+            process.exitCode=1;
+          } finally {await p.end().catch(()=>{});}
+          NODE
