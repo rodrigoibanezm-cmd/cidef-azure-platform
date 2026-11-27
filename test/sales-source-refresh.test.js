@@ -269,10 +269,10 @@ test('canonical shares one globally recognized SALES dataset across channel and 
       if (sql.includes('AS duplicate_valid_rows')) return [{ duplicate_valid_rows: 0, unrecoverable_etapa_rows: 0 }];
       if (sql.includes('AS valid_raw_vins')) return [{ valid_raw_vins: 0, canonical_rows: 0 }];
       if (sql.includes('AS integridad_tienda_fallida')) return [{ integridad_tienda_fallida: 0, integridad_dealer_fallida: 0 }];
-      if (sql.includes('SELECT id, nro_vin_chasis')) return [];
+      if (sql.includes('id, nro_operacion, razon_social')) return [];
       return [{}];
     }});
-    assert.equal(statements.filter(sql => sql.includes('SELECT id, nro_vin_chasis')).length, 1);
+    assert.equal(statements.filter(sql => sql.includes('id, nro_operacion, razon_social')).length, 1);
     assert.ok(statements.some(sql => sql.includes('AS vin_con_fecha_reconocida')));
     assert.ok(statements.some(sql => sql.includes('FROM final_resolution fr')));
   } finally {
