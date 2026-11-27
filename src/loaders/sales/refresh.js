@@ -97,6 +97,27 @@ export async function refreshDay({ client, container, date, loaders = LOADERS,
 }
 
 
+// Raw row signatures, grouped by VIN; unkeyed changes trigger full fallback.
+export const RAW_VIN_SIGNATURE_SQL = `
+ SELECT source, vin, md5(string_agg(row_hash, '' ORDER BY row_hash)) AS signature FROM (
+ SELECT 'vehiculos_raw'::text source, coalesce(upper(btrim(vin_chasis)),'') vin, md5(to_jsonb(v)::text) row_hash FROM public.vehiculos_raw v
+ UNION ALL SELECT 'ventas_raw', coalesce(upper(btrim(nro_vin_chasis)),''), md5(to_jsonb(v)::text) FROM public.ventas_raw v
+ UNION ALL SELECT 'notas_venta_raw', coalesce(upper(btrim(chasis)),''), md5(to_jsonb(n)::text) FROM public.notas_venta_raw n
+ UNION ALL SELECT 'notas_credito_raw', ''::text, md5(to_jsonb(n)::text) FROM public.notas_credito_raw n
+ ) raw_rows GROUP BY source, vin
+`;
+export async function captureRawVinDelta(execute = queryDb) {
+ const [delta] = await execute(`
+ WITH current_state AS (${RAW_VIN_SIGNATURE_SQL}),
+ changed AS (SELECT coalesce(b.vin,c.vin) vin FROM sales_raw_vin_before b
+ FULL JOIN current_state c ON b.source=c.source AND b.vin=c.vin
+ WHERE b.signature IS DISTINCT FROM c.signature)
+ SELECT coalesce(array_agg(DISTINCT vin) FILTER (WHERE length(vin)=17 AND vin ~ '^[A-HJ-NPR-Z0-9]{17}$'), ARRAY[]::text[]) changed_vins,
+ coalesce(bool_or(length(vin)<>17 OR vin !~ '^[A-HJ-NPR-Z0-9]{17}$'),false) requires_full
+ FROM changed`);
+ if (!delta || !Array.isArray(delta.changed_vins)) throw new Error('RAW VIN delta calculation failed');
+ return { changedVins: delta.changed_vins, requiresFull: delta.requires_full === true };
+}
 // RAW-only mode deliberately has independent idempotence from full SALES refresh.
 export async function refreshRawDay({ client, container, date, loaders = LOADERS, runId }) {
   const files = await inspectDay(container, date);
@@ -124,13 +145,15 @@ export async function refreshRawDay({ client, container, date, loaders = LOADERS
       }
       stage = 'load_raw';
       await queryDb('LOCK TABLE public.vehiculos_raw, public.ventas_raw, public.notas_venta_raw, public.notas_credito_raw IN SHARE ROW EXCLUSIVE MODE');
+      await queryDb(`CREATE TEMP TABLE sales_raw_vin_before ON COMMIT DROP AS ${RAW_VIN_SIGNATURE_SQL}`);
       const sources = {};
       for (let index = 0; index < TABLES.length; index++) {
         stage = 'load_' + TABLES[index];
         sources[TABLES[index]] = await loaders[index](index === 0 ? { skipRvmSync: true } : undefined);
       }
+      const rawDelta = await captureRawVinDelta(queryDb);
       const result = { engine: 'refresh_sales_raw_v01', date, runId, signature,
-        status: 'LOADED', sources, elapsedMs: Date.now() - startedAt };
+        status: 'LOADED', sources, rawDelta, elapsedMs: Date.now() - startedAt };
       stage = 'save_raw_history';
       await queryDb(`INSERT INTO public.sales_raw_refresh_runs
         (source_date, source_signature, run_id, sources, result)
