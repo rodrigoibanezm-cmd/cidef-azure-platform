@@ -231,7 +231,7 @@ test('canonical derived writes skip unchanged sale, resolution and recognized-da
   assert.match(classification, /IS DISTINCT FROM/);
   const resolution = statements.find(sql => sql.includes('SET resolution_status = CASE'));
   assert.ok(resolution);
-  assert.match(resolution, /WHERE resolution_status IS DISTINCT FROM CASE/);
+  assert.match(resolution, /AND resolution_status IS DISTINCT FROM CASE/);
   const dates = statements.find(sql => sql.includes('AS vin_con_fecha_reconocida'));
   assert.ok(dates);
   assert.match(dates, /vc\.fecha_venta_reconocida IS DISTINCT FROM expected\.expected_fecha/);
