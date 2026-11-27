@@ -258,3 +258,25 @@ test('sale classification preview runs only for dry-run, not the canonical write
       dry_run ? 0 : 1);
   }
 });
+
+test('canonical shares one globally recognized SALES dataset across channel and dates', async () => {
+  const oldUrl = process.env.AZURE_DATABASE_URL;
+  process.env.AZURE_DATABASE_URL = 'postgresql://test:placeholder@example.postgres.database.azure.com/test';
+  const statements = [];
+  try {
+    await refreshVehiculoCanonicoV01({ dry_run: false, execute: async sql => {
+      statements.push(sql);
+      if (sql.includes('AS duplicate_valid_rows')) return [{ duplicate_valid_rows: 0, unrecoverable_etapa_rows: 0 }];
+      if (sql.includes('AS valid_raw_vins')) return [{ valid_raw_vins: 0, canonical_rows: 0 }];
+      if (sql.includes('AS integridad_tienda_fallida')) return [{ integridad_tienda_fallida: 0, integridad_dealer_fallida: 0 }];
+      if (sql.includes('SELECT id, nro_vin_chasis')) return [];
+      return [{}];
+    }});
+    assert.equal(statements.filter(sql => sql.includes('SELECT id, nro_vin_chasis')).length, 1);
+    assert.ok(statements.some(sql => sql.includes('AS vin_con_fecha_reconocida')));
+    assert.ok(statements.some(sql => sql.includes('FROM final_resolution fr')));
+  } finally {
+    if (oldUrl === undefined) delete process.env.AZURE_DATABASE_URL;
+    else process.env.AZURE_DATABASE_URL = oldUrl;
+  }
+});
