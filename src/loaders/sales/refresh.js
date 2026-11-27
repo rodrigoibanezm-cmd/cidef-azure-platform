@@ -123,14 +123,22 @@ export async function captureRawVinDelta(execute = queryDb) {
   const [delta] = await execute(`
     WITH current_state AS (${RAW_VIN_SIGNATURE_SQL}),
     changed AS (
-      SELECT coalesce(b.vin, c.vin) AS vin
+      SELECT coalesce(b.vin,c.vin) AS vin
       FROM sales_raw_vin_before b
-      FULL JOIN current_state c
-        ON b.source=c.source AND b.vin=c.vin
+      FULL JOIN current_state c ON b.source=c.source AND b.vin=c.vin
       WHERE b.signature IS DISTINCT FROM c.signature
     )
     SELECT coalesce(array_agg(DISTINCT vin)
-      FILTER (WHERE length(vin)=17 AND vin ~ '^[A-HJ-NPR-Z0-9]{17}
+      FILTER (WHERE length(vin)=17 AND vin ~ '^[A-HJ-NPR-Z0-9]{17}$'), ARRAY[]::text[]) AS changed_vins,
+      coalesce(bool_or(length(vin)<>17 OR vin !~ '^[A-HJ-NPR-Z0-9]{17}$'),false) AS requires_full
+    FROM changed
+  `);
+  if (!delta || !Array.isArray(delta.changed_vins))
+    throw new Error('RAW VIN delta calculation failed');
+  return { changedVins: delta.changed_vins, requiresFull: delta.requires_full === true };
+}
+
+// RAW-only mode deliberately has independent idempotence from full SALES refresh.
 export async function refreshRawDay({ client, container, date, loaders = LOADERS, runId }) {
   const files = await inspectDay(container, date);
   const signature = sourceSignature(files);
