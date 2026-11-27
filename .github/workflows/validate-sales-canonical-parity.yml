@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/validate-sales-canonical-parity.yml'
+      - 'scripts/validate-sales-canonical-parity.mjs'
 
 permissions:
   contents: read
