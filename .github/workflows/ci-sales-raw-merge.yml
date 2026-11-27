@@ -1,0 +1,25 @@
+name: CI SALES RAW merge
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/loaders/sales/db.js'
+      - 'test/sales-raw-changed-only.test.js'
+      - '.github/workflows/ci-sales-raw-merge.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Validate changed-only SALES RAW merge
+        run: |
+          node --check src/loaders/sales/db.js
+          node --test test/sales-raw-changed-only.test.js test/sales-source-refresh.test.js
