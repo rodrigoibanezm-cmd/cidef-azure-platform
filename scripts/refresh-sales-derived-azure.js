@@ -12,7 +12,7 @@ import { publishCurrentDealerSellin, RAW_STATE_SIGNATURE_SQL } from '../src/load
 import { engineSignature } from '../lib/forum-snapshot/incremental.js';
 
 const LOCK = 'cidef_ventas_raw_neon_azure_sync';
-const INPUTS = ['vehiculos_raw', 'ventas_raw', 'notas_venta_raw',
+const INPUTS = ['vehiculos_raw', 'ventas_raw', 'notas_venta_raw', 'notas_credito_raw',
   'producto_aliases_v01', 'dealers_master', 'dealer_groups', 'dealer_aliases',
   'sucursales_master', 'sucursal_aliases'];
 const emit = value => console.log(JSON.stringify(value));
