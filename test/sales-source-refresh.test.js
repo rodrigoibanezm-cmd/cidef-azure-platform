@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import XLSX from 'xlsx';
-import { runSalesRefresh, normalizeDates } from '../src/loaders/sales/refresh.js';
+import { runSalesRefresh, runSalesRawRefresh, captureRawVinDelta, normalizeDates } from '../src/loaders/sales/refresh.js';
 import { requestedDates } from '../scripts/refresh-sales-sources-azure.js';
 import { downloadBlobObject, inspectDay, SOURCE_PREFIXES, withSourceContext } from '../src/loaders/sales/source-io.js';
 import { parseCreditNoteSnapshot, snapshotDateFromKey } from '../src/loaders/sales/import-notas-credito.js';
@@ -38,6 +38,8 @@ function fakeDatabase({ locked = true } = {}) {
         if (result) rows = [{ result }];
       }
       if (sql.includes('max(source_date)')) rows = [{ date: [...journal.values()].map(r => r.date).sort().at(-1) || null }];
+      if (sql.includes('AS changed_vins') && sql.includes('sales_raw_vin_before'))
+        rows = [{ changed_vins: ['LVAV2JVB4TE322929'], requires_full: false }];
       if (sql.includes('INSERT INTO public.sales_refresh_runs')) {
         pending = { key: params[0] + ':' + params[1], result: JSON.parse(params[4]) };
         rows = [{ changed_vins: 2 }];
@@ -279,4 +281,31 @@ test('canonical shares one globally recognized SALES dataset across channel and 
     if (oldUrl === undefined) delete process.env.AZURE_DATABASE_URL;
     else process.env.AZURE_DATABASE_URL = oldUrl;
   }
+});
+
+test('RAW-only journal records changed VINs from four sources transactionally', async () => {
+  const db = fakeDatabase();
+  const result = await runSalesRawRefresh({
+    pool: db.pool, container: fixtureContainer(), dates: ['2026-10-23'],
+    loaders: fixtureLoaders([]),
+  });
+  assert.deepEqual(result[0].rawDelta, { changedVins: ['LVAV2JVB4TE322929'], requiresFull: false });
+  const sql = db.calls.map(([statement]) => statement);
+  assert.equal(sql.filter(statement => statement.includes('CREATE TEMP TABLE sales_raw_vin_before')).length, 1);
+  assert.ok(sql.some(statement => statement.includes('FROM public.ventas_raw v')));
+  assert.ok(sql.some(statement => statement.includes('FROM public.notas_venta_raw n')));
+  assert.ok(sql.some(statement => statement.includes('FROM public.notas_credito_raw n')));
+  const write = db.calls.find(([statement]) => statement.includes('INSERT INTO public.sales_raw_refresh_runs'));
+  assert.ok(write);
+  assert.deepEqual(JSON.parse(write[1][4]).rawDelta.changedVins, ['LVAV2JVB4TE322929']);
+  assert.ok(sql.indexOf('COMMIT') > sql.findIndex(statement => statement.includes('AS changed_vins')));
+});
+
+test('unkeyed RAW modifications require full canonical fallback', async () => {
+  const result = await captureRawVinDelta(async sql => {
+    assert.match(sql, /length\(vin\)<>17/);
+    return [{ changed_vins: [], requires_full: true }];
+  });
+  assert.deepEqual(result, { changedVins: [], requiresFull: true });
+  await assert.rejects(captureRawVinDelta(async () => []), /delta calculation failed/);
 });
