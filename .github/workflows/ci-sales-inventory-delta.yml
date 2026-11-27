@@ -1,0 +1,25 @@
+name: CI SALES inventory delta
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/loaders/sales/import-vehiculos.js'
+      - 'test/sales-inventory-delta.test.js'
+      - '.github/workflows/ci-sales-inventory-delta.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Validate inventory delta
+        run: |
+          node --check src/loaders/sales/import-vehiculos.js
+          node --test test/sales-inventory-delta.test.js test/sales-source-refresh.test.js
