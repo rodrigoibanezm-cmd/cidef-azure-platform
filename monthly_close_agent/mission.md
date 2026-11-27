@@ -19,7 +19,9 @@ Autoridades y límites:
   certifica cifras comerciales.
 - Usa el catálogo dinámico de data_query; no hay lista local de fuentes.
   Usa data_query con source y request para observaciones declarativas; para
-  descubrir contratos usa action=data_describe; para identidades o detalles,
+  descubrir contratos usa action=data_describe; para los slots P2 consulta
+  evidence_requests del dominio y solicita request.evidence_shape cuando el
+  contrato lo admita; no supongas que un formato está desplegado. Para para identidades o detalles,
   usa action=data_resolve o data_fetch y sus arguments. No uses FETCH para totales.
   No consultes SQL, tablas RAW, archivos externos ni servicios adicionales.
 - Mantén un único run_id durante toda la investigación (lo impone el cliente).

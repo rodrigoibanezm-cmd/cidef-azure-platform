@@ -2,6 +2,11 @@ name: Build P4 MCP image
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy verified image to existing P4 service
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,6 +21,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate P4 before publishing
+        run: |
+          pip install -r monthly_close_agent/requirements.txt
+          python -m unittest discover -s test -p 'test_p4_*.py'
+          pip check
       - name: Azure login
         uses: azure/login@v2
         with:
@@ -32,3 +45,22 @@ jobs:
           docker build --file Dockerfile.p4 --tag "$IMAGE" .
           docker push "$IMAGE"
           echo "Published $IMAGE"
+      - name: Deploy existing P4 and verify MCP without model calls
+        if: inputs.deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          RG=rg-cidef-prod
+          APP=cidef-p4
+          IMAGE="cidefprodacr.azurecr.io/cidef-p4:${GITHUB_SHA}"
+          az containerapp show -g "$RG" -n "$APP" --query name -o tsv
+          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" -o none
+          FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+          REF=$(az containerapp show -g "$RG" -n "$APP" --query "properties.template.containers[0].env[?name=='P4_API_TOKEN'].secretRef | [0]" -o tsv)
+          test -n "$REF"
+          TOKEN=$(az containerapp secret show -g "$RG" -n "$APP" --secret-name "$REF" --query value -o tsv)
+          test -n "$TOKEN"
+          echo "::add-mask::$TOKEN"
+          export P4_TEST_URL="https://$FQDN/mcp" P4_TEST_TOKEN="$TOKEN"
+          python scripts/probe-p4-endpoint.py
+          echo "MCP: $P4_TEST_URL" >> "$GITHUB_STEP_SUMMARY"
