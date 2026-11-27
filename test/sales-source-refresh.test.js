@@ -212,6 +212,9 @@ test('canonical base UPSERT writes only changed values and preserves source meta
 
 test('canonical derived writes skip unchanged sale, resolution and recognized-date data', async () => {
   const statements = [];
+  const previousAzureUrl = process.env.AZURE_DATABASE_URL;
+  process.env.AZURE_DATABASE_URL = 'postgresql://test:placeholder@example.postgres.database.azure.com/test';
+  try {
   await refreshVehiculoCanonicoV01({ dry_run: false, execute: async sql => {
     statements.push(sql);
     if (sql.includes('AS duplicate_valid_rows')) return [{ duplicate_valid_rows: 0, unrecoverable_etapa_rows: 0 }];
@@ -231,4 +234,8 @@ test('canonical derived writes skip unchanged sale, resolution and recognized-da
   assert.ok(dates);
   assert.match(dates, /vc\.fecha_venta_reconocida IS DISTINCT FROM expected\.expected_fecha/);
   assert.match(dates, /FROM expected\s+LEFT JOIN updated USING \(vehiculo_id\)/);
+  } finally {
+    if (previousAzureUrl === undefined) delete process.env.AZURE_DATABASE_URL;
+    else process.env.AZURE_DATABASE_URL = previousAzureUrl;
+  }
 });
