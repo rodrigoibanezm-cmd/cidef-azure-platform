@@ -7,6 +7,10 @@ on:
         description: Deploy verified image to existing P4 service
         type: boolean
         default: false
+      oauth_client_id:
+        description: Entra application client ID for P4 OAuth (blank preserves existing configuration)
+        type: string
+        default: ''
       verify_only:
         description: Verify existing deployed MCP without building or updating Azure
         type: boolean
@@ -52,6 +56,9 @@ jobs:
           echo "Published $IMAGE"
       - name: Deploy existing P4 and verify MCP without model calls
         if: inputs.deploy || inputs.verify_only
+        env:
+          P4_ENTRA_CLIENT_INPUT: ${{ inputs.oauth_client_id }}
+          P4_ENTRA_TENANT_INPUT: ${{ secrets.AZURE_TENANT_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -62,7 +69,16 @@ jobs:
           FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
           test -n "$FQDN"
           if [[ "${{ inputs.verify_only }}" != "true" ]]; then
-            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "P4_PUBLIC_HOST=$FQDN" -o none
+            ENV_VARS=("P4_PUBLIC_HOST=$FQDN")
+            if [[ -n "$P4_ENTRA_CLIENT_INPUT" ]]; then
+              # Reuse the existing Admin allowlist without logging user identities.
+              OIDS=$(az containerapp show -g "$RG" -n cidef-admin-crm --query "properties.template.containers[0].env[?name=='ADMIN_ALLOWED_OIDS'].value | [0]" -o tsv)
+              test -n "$OIDS"
+              test "$OIDS" != "None"
+              echo "::add-mask::$OIDS"
+              ENV_VARS+=("P4_OAUTH_ENABLED=true" "P4_ENTRA_TENANT_ID=$P4_ENTRA_TENANT_INPUT" "P4_ENTRA_CLIENT_ID=$P4_ENTRA_CLIENT_INPUT" "P4_ALLOWED_OIDS=$OIDS")
+            fi
+            az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "${ENV_VARS[@]}" -o none
           fi
           az containerapp show -g "$RG" -n "$APP" --query "{image:properties.template.containers[0].image,revision:properties.latestReadyRevisionName,state:properties.provisioningState}" -o json
           echo "MCP: https://$FQDN/mcp"

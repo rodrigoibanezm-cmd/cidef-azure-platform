@@ -6,6 +6,7 @@ on:
       - 'test/test_p4_unified.py'
       - 'test/test_p4_budget.py'
       - 'test/test_p4_mcp.py'
+      - 'test/test_p4_oauth.py'
       - 'Dockerfile.p4'
       - '.github/workflows/ci-p4.yml'
   workflow_dispatch:
@@ -25,5 +26,6 @@ jobs:
       - run: python -m unittest discover -s test -p test_p4_unified.py
       - run: python -m unittest discover -s test -p test_p4_budget.py
       - run: python -m unittest discover -s test -p test_p4_mcp.py
+      - run: python -m unittest discover -s test -p test_p4_oauth.py
       - run: pip check
       - run: docker build -f Dockerfile.p4 -t p4-ci .

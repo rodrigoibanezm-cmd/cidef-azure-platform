@@ -15,10 +15,6 @@ from .runner import generate
 from .routing import validate_route
 from .evidence import evidence_status
 
-mcp = FastMCP("cidef-p4", stateless_http=True, json_response=True)
-
-
-@mcp.tool()
 async def commercial_analyze(question: str, route: str, research_goal: str) -> dict:
     """Only for complex investigations requiring adaptive multi-step evidence.
     Never call for descriptive queries, rankings, or a single existing P1/P2
@@ -28,6 +24,11 @@ async def commercial_analyze(question: str, route: str, research_goal: str) -> d
     """ 
     if not validate_route(route, research_goal):
         return {"status": "DIRECT_MOTOR", "message": "Use data_query or existing P2 directly."}
+    if os.getenv("P4_OAUTH_ENABLED", "false").lower() == "true":
+        from mcp.server.auth.middleware.auth_context import get_access_token
+        access = get_access_token()
+        if access is None or access.client_id == "p4-deployment-probe":
+            raise ValueError("USER_OAUTH_REQUIRED")
     if not isinstance(question, str) or not 0 < len(question.strip()) <= 8000:
         raise ValueError("INVALID_QUESTION")
     if len(research_goal) > 2000:
@@ -63,10 +64,19 @@ def create_app():
     if public_host:
         hosts.extend([public_host, public_host + ':443'])
         origins.append('https://' + public_host)
-    mcp.settings.transport_security = TransportSecuritySettings(
-        enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins,
-    )
+    oauth = os.getenv("P4_OAUTH_ENABLED", "false").lower() == "true"
+    options = {}
+    if oauth:
+        from .entra_auth import entra_options
+        options = entra_options(public_host)
+    mcp = FastMCP("cidef-p4", stateless_http=True, json_response=True,
+                  transport_security=TransportSecuritySettings(
+                      enable_dns_rebinding_protection=True, allowed_hosts=hosts,
+                      allowed_origins=origins), **options)
+    mcp.tool()(commercial_analyze)
     app = mcp.streamable_http_app()
+    if oauth:
+        return app
 
     async def require_token(request, call_next):
         expected = "Bearer " + os.environ["P4_API_TOKEN"]
