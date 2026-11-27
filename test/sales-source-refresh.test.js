@@ -190,3 +190,22 @@ test('the reused canonical updater forwards every helper to the injected executo
   assert.ok(statements.some(sql => sql.includes('UPDATE vehiculo_canonico vc')));
   assert.ok(statements.some(sql => sql.includes('resolution_status')));
 });
+
+test('canonical base UPSERT writes only changed values and preserves source metadata', async () => {
+  const statements = [];
+  await refreshVehiculoCanonicoV01({ dry_run: false, execute: async sql => {
+    statements.push(sql);
+    if (sql.includes('AS duplicate_valid_rows')) return [{ duplicate_valid_rows: 0, unrecoverable_etapa_rows: 0 }];
+    if (sql.includes('AS valid_raw_vins')) return [{ valid_raw_vins: 0, canonical_rows: 0 }];
+    if (sql.includes('AS integridad_tienda_fallida')) return [{ integridad_tienda_fallida: 0, integridad_dealer_fallida: 0 }];
+    if (sql.includes('SELECT id, nro_vin_chasis')) return [];
+    return [{}];
+  } });
+  const upsert = statements.find(sql => sql.includes('INSERT INTO public.vehiculo_canonico AS vc'));
+  assert.ok(upsert);
+  const predicate = upsert.slice(upsert.indexOf('canonicalized_at=now()'));
+  assert.match(predicate, /WHERE \(vc\.version_id,.*vc\.source_table\) IS DISTINCT FROM/s);
+  assert.match(predicate, /\(excluded\.version_id,.*excluded\.source_vin_raw, 'vehiculos_raw'\)/s);
+  assert.match(predicate, /RETURNING vin/);
+  assert.ok(!predicate.includes('canonicalized_at) IS DISTINCT FROM'));
+});
