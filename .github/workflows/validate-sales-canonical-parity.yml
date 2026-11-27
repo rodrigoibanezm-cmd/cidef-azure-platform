@@ -1,0 +1,73 @@
+name: Validate SALES canonical parity (isolated copy)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/validate-sales-canonical-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    environment: Production
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: fixture
+          POSTGRES_PASSWORD: fixture
+          POSTGRES_DB: sales_parity_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fixture -d sales_parity_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      SALES_PARITY_DATABASE_URL: postgresql://fixture:fixture@127.0.0.1:5432/sales_parity_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate script and install existing dependencies
+        run: |
+          node --check scripts/validate-sales-canonical-parity.mjs
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Copy required SALES tables from Azure read-only
+        shell: bash
+        env:
+          AZURE_DATABASE_URL: ${{ secrets.AZURE_DATABASE_URL }}
+          PGOPTIONS: '-c default_transaction_read_only=on'
+          PGSSLMODE: require
+        run: |
+          set -euo pipefail
+          test -n "$AZURE_DATABASE_URL"
+          umask 077
+          dir="$(mktemp -d "$RUNNER_TEMP/sales-parity.XXXXXX")"
+          trap 'rm -rf "$dir"' EXIT
+          docker run --rm --network host -e AZURE_DATABASE_URL -e PGOPTIONS -e PGSSLMODE \
+            --entrypoint sh postgres:18 -ec 'exec pg_dump --dbname="$AZURE_DATABASE_URL" "$@"' sh \
+            --format=custom --no-owner --no-privileges --strict-names --lock-wait-timeout=10s \
+            --table=public.vehiculos_raw --table=public.ventas_raw \
+            --table=public.notas_venta_raw --table=public.notas_credito_raw \
+            --table=public.vehiculo_canonico --table=public.producto_aliases_v01 \
+            --table=public.dealers_master --table=public.dealer_groups --table=public.dealer_aliases \
+            --table=public.sucursales_master --table=public.sucursal_aliases \
+            > "$dir/source.dump" 2>"$dir/dump.err" || { echo 'Read-only source copy failed'; exit 1; }
+          docker run --rm -v "$dir:/work:ro" postgres:18 pg_restore --list /work/source.dump \
+            | sed '/ FK CONSTRAINT /d' > "$dir/restore.list"
+          # External FK targets are outside the isolated scope; retain data, indexes and uniqueness.
+          PGDATABASE="$SALES_PARITY_DATABASE_URL" docker run --rm --network host \
+            -e PGDATABASE -v "$dir:/work:ro" --entrypoint sh postgres:18 -ec \
+            'exec pg_restore --dbname="$PGDATABASE" --use-list=/work/restore.list --no-owner --no-privileges --exit-on-error /work/source.dump' \
+            >"$dir/restore.out" 2>"$dir/restore.err" || { echo 'Isolated PostgreSQL restore failed'; exit 1; }
+          echo 'Required tables copied to isolated PostgreSQL; no dump or row data published.'
+      - name: Compare full and incremental canonical on controlled VIN changes
+        run: node scripts/validate-sales-canonical-parity.mjs
+
+# Only the ephemeral runner is modified. No ACR, deploy, Azure job, or production flag.
