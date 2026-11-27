@@ -58,3 +58,51 @@ test('sell-in preserves certified VINs whose model identity is unresolved', asyn
   assert.doesNotMatch(code.slice(code.indexOf('export async function publishCurrentDealerSellin'),
     code.indexOf('export async function runSalesRefresh')), /model <= 0/);
 });
+
+test('verified RAW fingerprint chain scopes canonical VIN updates', async () => {
+  const { planCanonicalScope } = await import('../scripts/refresh-sales-derived-azure.js');
+  const vin = 'LVAV2JVB4TE322929';
+  const client = { async query(sql) {
+    if (sql.includes("stage='vehiculo_canonico'"))
+      return { rows: [{ completed_at: '2026-11-25T00:00:00Z', result: {
+        master_signature: 'masters', code_signature: 'engine', raw_state_signature: 'before',
+      }}] };
+    if (sql.includes('FROM public.sales_raw_refresh_runs'))
+      return { rows: [{ result: { rawDelta: {
+        rawBeforeSignature: 'before', rawStateSignature: 'after',
+        requiresFull: false, changedVins: [vin],
+      }}}] };
+    throw new Error('Unexpected SQL: ' + sql);
+  }};
+  const input = { masterSignature: 'masters', codeSignature: 'engine',
+    currentRawSignature: 'after', rvmStage: { skipped:true } };
+  assert.deepEqual(await planCanonicalScope(client,input),
+    { affectedVins: [vin], reason: 'VERIFIED_RAW_DELTA' });
+  assert.deepEqual((await planCanonicalScope(client, { ...input, codeSignature:'new-code' })).reason,
+    'NO_COMPATIBLE_BASELINE');
+  assert.deepEqual((await planCanonicalScope(client, { ...input,
+    currentRawSignature:'out-of-band' })).reason, 'RAW_CHANGED_OUTSIDE_LEDGER');
+  assert.deepEqual((await planCanonicalScope(client, { ...input,
+    rvmStage:{ skipped:false, result:{rows_updated:1} } })).reason, 'RVM_UPDATED');
+});
+
+test('unkeyed or discontinuous RAW snapshots cannot enter selective mode', async () => {
+  const { planCanonicalScope } = await import('../scripts/refresh-sales-derived-azure.js');
+  for (const delta of [
+    { rawBeforeSignature:'before', rawStateSignature:'after', changedVins:[], requiresFull:true },
+    { rawBeforeSignature:'untracked', rawStateSignature:'after', changedVins:[], requiresFull:false },
+  ]) {
+    const client = { async query(sql) {
+      return { rows: sql.includes("stage='vehiculo_canonico'")
+        ? [{completed_at:'2026-11-25T00:00:00Z', result:{
+          raw_state_signature:'before', master_signature:'masters', code_signature:'engine',
+        }}] : [{result:{rawDelta:delta}}] };
+    }};
+    const result = await planCanonicalScope(client, {
+      masterSignature:'masters', codeSignature:'engine',
+      currentRawSignature:'after', rvmStage:{skipped:true},
+    });
+    assert.equal(result.affectedVins, null);
+    assert.equal(result.reason, 'RAW_CHAIN_NOT_CERTIFIED');
+  }
+});
