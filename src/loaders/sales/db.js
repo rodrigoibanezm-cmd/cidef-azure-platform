@@ -55,10 +55,12 @@ export async function commitTableSnapshot(snapshot) {
         existing.total !== current.total || existing.unique_ids !== current.total) {
       throw new Error('SALES merge blocked: null or duplicate source id');
     }
-    const updates = names.filter(n => n !== 'id')
-      .map(n => `${quoteIdent(n)} = s.${quoteIdent(n)}::${types.get(n)}`).join(',');
-    await queryDb(`UPDATE public.ventas_raw AS t SET ${updates}
-      FROM ${quoteIdent(snapshot.staging)} AS s WHERE t.id::text = s.id`);
+    const mutable = names.filter(n => n !== 'id');
+    const updates = mutable.map(n => `${quoteIdent(n)} = s.${quoteIdent(n)}::${types.get(n)}`).join(',');
+    const changed = mutable.map(n => `t.${quoteIdent(n)} IS DISTINCT FROM s.${quoteIdent(n)}::${types.get(n)}`).join(' OR ');
+    if (mutable.length) await queryDb(`UPDATE public.ventas_raw AS t SET ${updates}
+      FROM ${quoteIdent(snapshot.staging)} AS s
+      WHERE t.id::text = s.id AND (${changed})`);
     await queryDb(`INSERT INTO public.ventas_raw (${names.map(quoteIdent).join(',')})
       SELECT ${names.map(n => `s.${quoteIdent(n)}::${types.get(n)}`).join(',')}
       FROM ${quoteIdent(snapshot.staging)} AS s
