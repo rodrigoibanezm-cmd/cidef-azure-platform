@@ -252,9 +252,9 @@ test('sale classification preview runs only for dry-run, not the canonical write
       return [{}];
     } });
     assert.equal(result.dry_run, dry_run);
-    assert.equal(statements.filter(sql => sql.includes('FROM final_resolution\n')).length,
+    assert.equal(statements.filter(sql => /FROM final_resolution(?: fr)?\n/.test(sql)).length,
       1, 'resolve sale classification only once per invocation');
-    assert.equal(statements.filter(sql => sql.includes('FROM final_resolution\n') && sql.includes('UPDATE vehiculo_canonico vc')).length,
+    assert.equal(statements.filter(sql => /FROM final_resolution(?: fr)?\n/.test(sql) && sql.includes('UPDATE vehiculo_canonico vc')).length,
       dry_run ? 0 : 1);
   }
 });
