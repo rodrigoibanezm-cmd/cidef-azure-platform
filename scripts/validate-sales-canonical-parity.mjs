@@ -23,8 +23,24 @@ async function run(affectedVins) {
   await client.query('SAVEPOINT parity_case');
   try {
     const start = performance.now();
-    const result = await refreshVehiculoCanonicoV01({ execute, affectedVins });
+    const queries = [];
+    const timedExecute = async (sql, values = []) => {
+      const started = performance.now();
+      const rows = await execute(sql, values);
+      // Log only static SQL identifiers, never parameters or data.
+      const normalized = sql.trim().replace(/\s+/g, ' ');
+      const operation = normalized.match(/^(?:WITH\s+(?:RECURSIVE\s+)?[\w]+|SELECT|ALTER TABLE\s+[\w.]+|UPDATE\s+[\w.]+|INSERT INTO\s+[\w.]+)/i)?.[0] || 'OTHER';
+      const tables = [...new Set([...normalized.matchAll(/\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:public\.)?([a-z_][a-z_0-9]*)\b/gi)].map(m => m[1]))].slice(0, 12);
+      queries.push({ sequence: queries.length + 1, operation, tables,
+        elapsed_ms: Math.round(performance.now() - started) });
+      return rows;
+    };
+    const result = await refreshVehiculoCanonicoV01({ execute: timedExecute, affectedVins });
     const elapsed_ms = Math.round(performance.now() - start);
+    const sql_ms = queries.reduce((sum, q) => sum + q.elapsed_ms, 0);
+    console.log(JSON.stringify({ profile: affectedVins === null ? 'full' : 'incremental',
+      elapsed_ms, sql_ms, non_sql_ms: Math.max(0, elapsed_ms - sql_ms),
+      queries: queries.sort((a, b) => b.elapsed_ms - a.elapsed_ms) }, null, 2));
     return { elapsed_ms, result, rows: await snapshot() };
   } finally {
     await client.query('ROLLBACK TO SAVEPOINT parity_case');
