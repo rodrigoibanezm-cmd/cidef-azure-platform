@@ -35,13 +35,14 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
 
 
 class HTTPTests(unittest.TestCase):
-    @patch.dict(os.environ, {"P4_API_TOKEN":"test-token","OPENAI_API_KEY":"test-key","OPENAI_MODEL":"gpt-5.1","MCP_URL":"https://example.test/api/mcp"})
+    @patch.dict(os.environ, {"P4_PUBLIC_HOST":"p4.example.test","P4_API_TOKEN":"test-token","OPENAI_API_KEY":"test-key","OPENAI_MODEL":"gpt-5.1","MCP_URL":"https://example.test/api/mcp"})
     def test_authenticated_mcp_discovery(self):
-        with TestClient(create_app()) as client:
+        with TestClient(create_app(), base_url='https://p4.example.test') as client:
             body={"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}
             headers={"Accept":"application/json, text/event-stream"}
             self.assertEqual(client.post("/mcp",json=body,headers=headers).status_code,401)
             headers["Authorization"]="Bearer test-token"
             result=client.post("/mcp",json=body,headers=headers)
+            self.assertEqual(client.post("/mcp",json=body,headers={**headers,"Host":"untrusted.example"}).status_code,421)
             self.assertEqual(result.status_code,200)
             self.assertEqual([t["name"] for t in result.json()["result"]["tools"]],["commercial_analyze"])

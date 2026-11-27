@@ -231,3 +231,5 @@ SQL-first SALES (2026-11-19): candidatos DEALERS y agrupaciones OWN_STORES está
 
 ## P4 MCP operational handoff — 2026-11-27
 - Reuse existing cidef-p4, authenticated /mcp, commercial_analyze. Return report, run_id, authority, usage and P3 trace locator. Temporary reports are cleaned after response; P3 remains durable evidence. Direct queries bypass SDK. No new infrastructure. CI adds mocked response and HTTP discovery/auth tests. Manual build-p4 workflow supports deploy=true to update only existing P4 image and smoke-test without paid model calls; no auto deployment. Actual connector setup requires user action and authenticated compatible MCP access; do not disable token auth. Live research and semantic evidence still require verification.
+
+- P4 CI run 46003015362: 8/9 passed; HTTP test 421 Invalid Host header testserver. Configure exact public ingress host from Azure in deploy workflow, retain DNS rebinding and bearer checks; test trusted host and reject unknown host. New CI required before deploy. No production change.

@@ -54,8 +54,9 @@ jobs:
           APP=cidef-p4
           IMAGE="cidefprodacr.azurecr.io/cidef-p4:${GITHUB_SHA}"
           az containerapp show -g "$RG" -n "$APP" --query name -o tsv
-          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" -o none
           FQDN=$(az containerapp show -g "$RG" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+          test -n "$FQDN"
+          az containerapp update -g "$RG" -n "$APP" --image "$IMAGE" --set-env-vars "P4_PUBLIC_HOST=$FQDN" -o none
           REF=$(az containerapp show -g "$RG" -n "$APP" --query "properties.template.containers[0].env[?name=='P4_API_TOKEN'].secretRef | [0]" -o tsv)
           test -n "$REF"
           TOKEN=$(az containerapp secret show -g "$RG" -n "$APP" --secret-name "$REF" --query value -o tsv)

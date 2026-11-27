@@ -7,6 +7,7 @@ from pathlib import Path
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -56,6 +57,15 @@ def create_app():
     for name in ("P4_API_TOKEN", "OPENAI_API_KEY", "OPENAI_MODEL", "MCP_URL"):
         if not os.getenv(name):
             raise RuntimeError(f"Missing required environment variable: {name}")
+    public_host = os.getenv('P4_PUBLIC_HOST', '').strip()
+    hosts = ['localhost', 'localhost:*', '127.0.0.1', '127.0.0.1:*']
+    origins = ['http://localhost', 'http://localhost:*', 'http://127.0.0.1', 'http://127.0.0.1:*']
+    if public_host:
+        hosts.extend([public_host, public_host + ':443'])
+        origins.append('https://' + public_host)
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins,
+    )
     app = mcp.streamable_http_app()
 
     async def require_token(request, call_next):
