@@ -38,41 +38,64 @@ try {
   if (identity.name !== database) throw new Error('Unexpected database');
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
   await client.query("SET LOCAL statement_timeout = '600s'");
-  const [baseline] = await execute(`
-    SELECT completed_at, result FROM public.sales_derived_refresh_stages
-    WHERE stage='vehiculo_canonico' AND status='COMPLETED'
-    ORDER BY completed_at DESC LIMIT 1
-  `);
-  if (!baseline) throw new Error('Missing canonical baseline');
-  const runs = await execute(`
-    SELECT result FROM public.sales_raw_refresh_runs
-    WHERE completed_at > $1::timestamptz ORDER BY completed_at, run_id
-  `, [baseline.completed_at]);
-  if (!runs.length) throw new Error('Copy must contain RAW updates after canonical baseline');
-  const vins = new Set();
-  let signature = baseline.result?.raw_state_signature;
-  for (const { result } of runs) {
-    const d = result?.rawDelta;
-    if (!signature || d?.requiresFull !== false || d.rawBeforeSignature !== signature ||
-        !d.rawStateSignature || !Array.isArray(d.changedVins))
-      throw new Error('No certified incremental RAW chain in copy');
-    for (const vin of d.changedVins) vins.add(vin);
-    signature = d.rawStateSignature;
-  }
-  if (!vins.size) throw new Error('No changed VINs to benchmark');
-  const { RAW_STATE_SIGNATURE_SQL } = await import('../src/loaders/sales/refresh.js');
-  const [current] = await execute(RAW_STATE_SIGNATURE_SQL);
-  if (current.signature !== signature) throw new Error('RAW state differs from ledger');
-  const scope = [...vins].sort();
+  // Establish the same complete baseline on the isolated real-data copy.
+  // Controlled changes are NOT a replay of a historical production refresh.
+  await refreshVehiculoCanonicoV01({ execute, affectedVins: null });
+  const baseline = new Map((await snapshot()).map(r => [r.vin, r.digest]));
+  const { RAW_VIN_SIGNATURE_SQL, captureRawVinDelta } =
+    await import('../src/loaders/sales/refresh.js');
+  await client.query('CREATE TEMP TABLE sales_raw_vin_before ON COMMIT DROP AS ' +
+    RAW_VIN_SIGNATURE_SQL);
+  const sampleSize = Number(process.env.SALES_PARITY_SAMPLE_SIZE || '100');
+  if (!Number.isSafeInteger(sampleSize) || sampleSize < 2 || sampleSize > 10000)
+    throw new Error('Invalid sample size');
+  // Use existing VINs and observed data. Exercise both stock and sale recognition.
+  const stock = await execute(`
+    WITH candidates AS (
+      SELECT v.vin, r.color
+      FROM public.vehiculo_canonico v JOIN public.vehiculos_raw r
+        ON upper(btrim(r.vin_chasis)) = v.vin
+      WHERE NOT v.vendido AND nullif(btrim(r.color), '') IS NOT NULL
+      ORDER BY v.vin LIMIT $1
+    )
+    UPDATE public.vehiculos_raw r
+      SET color = (SELECT other.color FROM public.vehiculos_raw other
+                   WHERE nullif(btrim(other.color),'') IS NOT NULL
+                     AND other.color IS DISTINCT FROM r.color
+                   ORDER BY other.color LIMIT 1)
+    FROM candidates c
+    WHERE upper(btrim(r.vin_chasis)) = c.vin
+    RETURNING c.vin
+  `, [Math.floor(sampleSize / 2)]);
+  const sales = await execute(`
+    WITH candidates AS (
+      SELECT v.vin FROM public.vehiculo_canonico v
+      WHERE v.vendido AND EXISTS (SELECT 1 FROM public.ventas_raw r
+        WHERE upper(btrim(r.nro_vin_chasis)) = v.vin)
+      ORDER BY v.vin LIMIT $1
+    )
+    DELETE FROM public.ventas_raw r USING candidates c
+      WHERE upper(btrim(r.nro_vin_chasis)) = c.vin
+    RETURNING c.vin
+  `, [Math.ceil(sampleSize / 2)]);
+  if (!stock.length || !sales.length) throw new Error('Missing representative stock or sales rows');
+  const delta = await captureRawVinDelta(execute);
+  if (delta.requiresFull || !delta.changedVins.length)
+    throw new Error('Controlled changes did not produce a valid VIN delta');
+  const scope = delta.changedVins.sort();
   const incremental = await run(scope);
   const full = await run(null);
   const a = new Map(incremental.rows.map(r => [r.vin, r.digest]));
   const b = new Map(full.rows.map(r => [r.vin, r.digest]));
   const differences = [...new Set([...a.keys(), ...b.keys()])]
     .filter(vin => a.get(vin) !== b.get(vin));
+  const changedResults = full.rows.filter(r => baseline.get(r.vin) !== r.digest).length;
+  if (!changedResults) throw new Error('Controlled changes did not affect canonical results');
   console.log(JSON.stringify({
     status: differences.length ? 'FAIL' : 'PASS',
-    scope: 'canonical_only', changed_vins: scope.length,
+    scope: 'canonical_only', scenario: 'controlled_delta_on_real_copy',
+    changed_vins: scope.length, changed_canonical_rows: changedResults,
+    stock_rows_modified: stock.length, sales_rows_removed: sales.length,
     full_rows: b.size, incremental_rows: a.size,
     differences: differences.length,
     full_ms: full.elapsed_ms, incremental_ms: incremental.elapsed_ms,
@@ -81,6 +104,10 @@ try {
     ignored_fields: ['vehiculo_id', 'canonicalized_at']
   }, null, 2));
   if (differences.length) process.exitCode = 1;
+} catch (error) {
+  // No source data, SQL parameters or row-level error details in Actions logs.
+  console.error(JSON.stringify({ status: 'ERROR', code: error.code || error.name }));
+  process.exitCode = 1;
 } finally {
   await client.query('ROLLBACK').finally(() => client.end());
 }
